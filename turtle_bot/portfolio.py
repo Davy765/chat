@@ -82,6 +82,9 @@ class ModernConfig:
     pause_dd: float = 0.25
     pause_days: int = 10
     max_leverage: float = 1.0
+    # Optional (not a rulebook rule): cap one market's notional at this
+    # fraction of equity. None = rulebook as written.
+    max_position_pct: float | None = None
     slippage_bps: float = 2.0
     commission_per_share: float = 0.0
     margin_spread_pct: float = 1.5
@@ -264,8 +267,11 @@ class PortfolioBacktester:
                                  reason, p.same_bar_stop))
             m.pos = None
 
-        def cap_shares(want: int, price: float) -> int:
+        def cap_shares(want: int, price: float, m: _Market | None = None) -> int:
             room = cfg.max_leverage * prev_equity - gross_notional()
+            if cfg.max_position_pct is not None and m is not None:
+                held = m.pos.shares * last_close[m.ticker] if m.pos is not None else 0.0
+                room = min(room, cfg.max_position_pct * prev_equity - held)
             return max(0, min(want, math.floor(room / price)))
 
         for i in range(i0, T):
@@ -296,7 +302,7 @@ class PortfolioBacktester:
                 fresh = False
                 for od in orders:
                     if od.kind == "entry" and m.pos is None:
-                        sh = cap_shares(od.shares, o)
+                        sh = cap_shares(od.shares, o, m)
                         if sh <= 0:
                             log.append(f"{date.date()} {m.ticker}: entry dropped, leverage cap")
                             continue
@@ -305,7 +311,7 @@ class PortfolioBacktester:
                         m.pos.stop = o - cfg.stop_n * od.n
                         fresh = True
                     elif od.kind == "add" and m.pos is not None:
-                        sh = cap_shares(od.shares, o)
+                        sh = cap_shares(od.shares, o, m)
                         if sh <= 0:
                             continue
                         buy(m, o, sh)

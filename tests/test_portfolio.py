@@ -292,3 +292,19 @@ def test_open_position_stop_is_the_next_days_resting_stop():
             if t.exit_date == data["S0"].index[k] and t.ticker in held and t.ticker not in exiting \
                     and t.exit_reason == "stop":
                 assert math.isclose(t.exit_price, held[t.ticker]["stop"])
+
+
+def test_position_cap_limits_one_market_notional():
+    brk = [(100.2, 101.2, 100.1, 101.0), (101.3, 101.6, 101.1, 101.5)]
+    df = flat_then(brk)
+    res = run1(df, max_units=1, risk_per_unit=0.05, max_position_pct=0.20)  # wants ~100% without cap
+    assert res.open_positions[0]["shares"] * 101.3 <= 0.20 * 100_000
+    off = run1(df, max_units=1, risk_per_unit=0.05)
+    assert off.open_positions[0]["shares"] > res.open_positions[0]["shares"]
+
+
+def test_position_cap_default_off_keeps_rulebook_results():
+    data, groups = _universe(9)
+    a = PortfolioBacktester(ModernConfig()).run(data, groups)
+    b = PortfolioBacktester(ModernConfig(max_position_pct=None)).run(data, groups)
+    pd.testing.assert_series_equal(a.equity, b.equity)

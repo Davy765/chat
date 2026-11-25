@@ -28,10 +28,10 @@ past data gives **no** improvement afterwards (ROBUSTNESS.md §E). So:
 | Candidate | 2008–17 excess Sharpe | 2018–26 CAGR | 2018–26 max DD | 2018–26 excess Sharpe |
 |---|---:|---:|---:|---:|
 | C0 rulebook (current) | 0.28 | 7.99% | −6.7% | 0.68 |
-| C1 + 20% per-market cap | 0.29 | 9.78% | −5.1% | 1.04 |
-| C2 + 33% per-market cap | 0.32 | 8.81% | −5.9% | 0.80 |
+| C1 + 20% per-market cap | 0.31 | 9.53% | −5.1% | 1.00 |
+| C2 + 33% per-market cap | 0.32 | 8.58% | −5.9% | 0.77 |
 | C3 ensemble 40/55/80 days | 0.28 | 7.34% | −7.2% | 0.62 |
-| C4 ensemble + 20% cap | 0.31 | 9.44% | −4.8% | 1.01 |
+| C4 ensemble + 20% cap | 0.30 | 9.01% | −5.0% | 0.94 |
 | C5 original S2 long-only | **0.39** | 5.49% | −8.0% | 0.55 |
 
 **A bug I found and fixed.** The first run reported "adopt C2" (the 33%
@@ -42,14 +42,21 @@ in-sample winner and then fails the hold-out. The fix changed code, not
 rules, and both runs are described here. It shows how easily a
 plausible-looking "improvement" can be produced by accident.
 
+**A second correction.** When the 20% cap was added to the paper report, it
+showed an "add" order the cap would have blocked at the fill. The engine now
+applies the cap when it approves an order after the close, so the printed
+orders, heat and unit counts match what can fill. That moved the cap
+candidates' numbers slightly (C1: 0.29 → 0.31 in-sample, 1.04 → 1.00
+hold-out). The decision is unchanged. The figures above are after the fix.
+
 ## What the results suggest (not adopted)
 
 - **Per-market caps (C1, C4) did best on 2018–2026,** with excess Sharpe
-  of about 1.0 vs 0.68, higher returns and smaller drawdowns. A block
+  of about 0.94–1.00 vs 0.68, higher returns and smaller drawdowns. A block
   bootstrap puts C1's advantage over the rulebook *within 2018–2026* at
-  +0.36 (90% interval +0.12 to +0.62).
-- **But on 2008–2017 the same cap made no difference** (0.29 vs 0.28) and
-  earned less. It looks like the best choice only because I looked at the
+  +0.33 (90% interval +0.08 to +0.57).
+- **But on 2008–2017 the same cap made little difference** (0.31 vs 0.28)
+  and earned less. It looks like the best choice only because I looked at the
   hold-out. Adopting it now would be exactly the hindsight selection this
   procedure exists to prevent.
 - **It still makes sense mechanically.** It stops one quiet fund from
@@ -64,9 +71,10 @@ plausible-looking "improvement" can be produced by accident.
 
 1. **Keep trading the rulebook as written** in the paper report and the
    Alpaca paper bot (no change).
-2. **Optionally, track the 20% cap as a third paper version** (report
-   only, no orders). After 6–12 months, compare it with the rulebook on
-   data neither version was chosen on.
+2. **Track the 20% cap as a third paper version: done.** It appears as
+   version A2 in the paper report, report only, with no orders sent by the
+   bot. After 6–12 months, compare it with the rulebook on data neither
+   version was chosen on.
 3. **Don't keep optimizing on the same history.** Each extra round of
    "try it and look" makes the backtest look better and the future less
    predictable.

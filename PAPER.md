@@ -4,11 +4,13 @@
 what the rules would do. A paper account is simulated by the same engine
 used in the research.
 
-Two versions run side by side on the same 14 ETFs, with $100,000 each
+Three versions run side by side on the same 14 ETFs, with $100,000 each
 (`paper/config.json`):
 
 - **A. Modern Turtle rulebook** (STEP3.md): market orders at the next open,
-  plus GTC stop orders.
+  plus GTC stop orders. This is what the Alpaca paper bot trades.
+- **A2. The same rules plus a 20% cap per market** (STEP4.md): a hypothesis
+  under test, report only. Not adopted, and never sent to the broker.
 - **B. Original Turtle S2, long-only**: one sub-account per ETF, with
   stop orders that rest for one session.
 

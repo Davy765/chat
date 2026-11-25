@@ -308,3 +308,34 @@ def test_position_cap_default_off_keeps_rulebook_results():
     a = PortfolioBacktester(ModernConfig()).run(data, groups)
     b = PortfolioBacktester(ModernConfig(max_position_pct=None)).run(data, groups)
     pd.testing.assert_series_equal(a.equity, b.equity)
+
+
+def test_position_cap_is_applied_to_queued_orders():
+    """With a per-market cap, an add the cap would block is never queued, so a
+    report of pending orders never shows an order that cannot fill."""
+    entry = [(100.2, 101.2, 100.1, 101.0), (101.3, 101.6, 101.1, 101.5)]
+    up = [(102.4, 102.9, 102.3, 102.8)]                          # add signal on this close
+    df = flat_then(entry + up)
+    res = run1(df, risk_per_unit=0.05, max_position_pct=0.20, use_trailing=False)
+    pos = res.open_positions[0]
+    assert pos["shares"] * 101.3 <= 0.20 * 100_000 * 1.001
+    assert all(o["kind"] != "add" for o in res.pending_orders)
+    for o in res.pending_orders:
+        assert o["shares"] * df["Close"].iloc[-1] <= 0.20 * 100_000
+
+
+def test_capped_pending_orders_fill_exactly_next_open():
+    data, groups = _universe(6)
+    cfg = ModernConfig(max_position_pct=0.20, heat_cap=1.0, total_long_units=99, group_unit_cap=99,
+                       risk_per_unit=0.02)
+    for k in range(250, 1400, 7):
+        res = PortfolioBacktester(cfg).run({t: d.iloc[:k] for t, d in data.items()}, groups)
+        if any(o["kind"] in ("entry", "add") for o in res.pending_orders):
+            break
+    nxt = PortfolioBacktester(cfg).run({t: d.iloc[:k + 1] for t, d in data.items()}, groups)
+    before = {p["ticker"]: p["shares"] for p in res.open_positions}
+    after = {p["ticker"]: p["shares"] for p in nxt.open_positions}
+    closed = {t.ticker for t in nxt.trades if t.exit_date == data["S0"].index[k]}
+    for o in res.pending_orders:
+        if o["kind"] in ("entry", "add") and o["ticker"] not in closed:
+            assert after[o["ticker"]] - before.get(o["ticker"], 0) == o["shares"]

@@ -16,9 +16,12 @@ Each report is archived as paper/reports/<last session>.md and never
 overwritten, so the real-time record can later be compared with a rerun.
 A difference means the data was revised or something changed in the code.
 
-Two versions run side by side on the same markets and capital:
-  A. Modern Turtle rulebook (turtle_bot/portfolio.py), long/flat, cash account.
-  B. Original Turtle S2, long-only, one equal sub-account per ETF.
+Three versions run side by side on the same markets and capital:
+  A.  Modern Turtle rulebook (turtle_bot/portfolio.py), long/flat, cash account.
+      This is the version the Alpaca paper bot trades.
+  A2. Same rules + each market capped at 20% of equity. NOT adopted (STEP4.md):
+      tracked report-only, as a forward test of a hypothesis.
+  B.  Original Turtle S2, long-only, one equal sub-account per ETF.
 """
 
 from __future__ import annotations
@@ -70,10 +73,12 @@ def load_inputs(universe):
     return data, load_rate_csv(str(rate_path)), src
 
 
-def modern_section(data, groups, rate, start, equity) -> tuple[str, dict]:
-    res = PortfolioBacktester(ModernConfig(initial_equity=equity)).run(data, groups, rate, start)
+def modern_section(data, groups, rate, start, equity, cap=None,
+                   title="A. Modern Turtle rulebook", version="modern") -> tuple[str, dict]:
+    res = PortfolioBacktester(ModernConfig(initial_equity=equity, max_position_pct=cap)).run(
+        data, groups, rate, start)
     st = res.state
-    lines = ["## A. Modern Turtle rulebook\n",
+    lines = [f"## {title}\n",
              f"Equity **{money(st['equity'])}** · peak {money(st['peak'])} · drawdown {st['drawdown']:.1%} · "
              f"sizing equity {money(st['sizing_equity'])} · cash {money(st['cash'])} · "
              f"invested {st['gross_leverage']:.0%} · heat {st['heat']:.2%}"
@@ -112,7 +117,7 @@ def modern_section(data, groups, rate, start, equity) -> tuple[str, dict]:
         lines.append(table([{"ticker": t.ticker, "entry": t.entry_date.date(), "exit": t.exit_date.date(),
                              "reason": t.exit_reason, "P&L": money(t.pnl), "R": f"{t.r_multiple:.2f}"}
                             for t in recent]))
-    return "\n".join(lines), {"version": "modern", "equity": st["equity"], "positions": len(res.open_positions),
+    return "\n".join(lines), {"version": version, "equity": st["equity"], "positions": len(res.open_positions),
                               "orders": len(res.pending_orders), "trades_closed": len(res.trades)}
 
 
@@ -197,6 +202,9 @@ def main() -> None:
     stale = _next_session_already_opened(last)
 
     a_text, a_row = modern_section(data, universe, rate, start, equity)
+    a2_text, a2_row = modern_section(
+        data, universe, rate, start, equity, cap=0.20, version="modern_cap20",
+        title="A2. Rulebook + 20% per-market cap (report only — hypothesis from STEP4.md, not traded by the bot)")
     b_text, b_row = s2_section(data, rate, start, equity)
     header = [f"# Paper-trading report — after the close of {last.date()}\n",
               f"Paper account start: {start} with {money(equity)} per version · data: `{src.relative_to(ROOT)}` · "
@@ -206,7 +214,7 @@ def main() -> None:
     if stale:
         header.append("> ⚠️ **Generated late:** the session these orders are for had already opened. "
                       "This report doesn't count as a real-time record.\n")
-    text = "\n".join(header + [a_text, b_text])
+    text = "\n".join(header + [a_text, a2_text, b_text])
 
     out_dir = ROOT / "paper" / "reports"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -219,7 +227,7 @@ def main() -> None:
         journal = ROOT / "paper" / "journal.csv"
         row = pd.DataFrame([{**r, "session": last.date(), "real_time": not stale, "report": path.name,
                              "generated": dt.datetime.now().isoformat(timespec="seconds")}
-                            for r in (a_row, b_row)])
+                            for r in (a_row, a2_row, b_row)])
         row.to_csv(journal, mode="a", header=not journal.exists(), index=False)
     print(text)
     print(f"\nsaved {path.relative_to(ROOT)}")

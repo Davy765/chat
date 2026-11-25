@@ -15,10 +15,10 @@ Selection on 2008-01-02 → 2017-12-29 (later data cut off); hold-out 2018-01-02
 | candidate | IS_cagr_% | IS_max_dd_% | IS_excess_sharpe | OOS_cagr_% | OOS_max_dd_% | OOS_MAR | OOS_excess_sharpe | OOS_worst_year_% |
 |---|---|---|---|---|---|---|---|---|
 | C0 rulebook (baseline) | 2.13 | -12.06 | 0.28 | 7.99 | -6.71 | 1.19 | 0.68 | 0.33 |
-| C1 + 20% per-market cap | 1.84 | -8.09 | 0.29 | 9.78 | -5.13 | 1.91 | 1.04 | 5.13 |
-| C2 + 33% per-market cap | 2.36 | -11.58 | 0.32 | 8.81 | -5.90 | 1.49 | 0.80 | 3.12 |
+| C1 + 20% per-market cap | 1.96 | -8.13 | 0.31 | 9.53 | -5.12 | 1.86 | 1.00 | 4.72 |
+| C2 + 33% per-market cap | 2.35 | -11.47 | 0.32 | 8.58 | -5.89 | 1.46 | 0.77 | 2.37 |
 | C3 ensemble 40/55/80 | 2.10 | -12.18 | 0.28 | 7.34 | -7.18 | 1.02 | 0.62 | 0.98 |
-| C4 ensemble + 20% cap | 1.91 | -7.90 | 0.31 | 9.44 | -4.78 | 1.97 | 1.01 | 5.10 |
+| C4 ensemble + 20% cap | 1.91 | -7.92 | 0.30 | 9.01 | -4.96 | 1.82 | 0.94 | 4.60 |
 | C5 original S2 long-only | 1.83 | -5.49 | 0.39 | 5.49 | -7.99 | 0.69 | 0.55 | 1.50 |
 
 ## Hold-out CAGR % by sub-period
@@ -26,8 +26,8 @@ Selection on 2008-01-02 → 2017-12-29 (later data cut off); hold-out 2018-01-02
 | candidate | 2018-2020 | 2021-2023 | 2024-2026 |
 |---|---|---|---|
 | C0 rulebook (baseline) | 13.61 | 5.43 | 5.29 |
-| C1 + 20% per-market cap | 12.25 | 6.37 | 10.93 |
-| C2 + 33% per-market cap | 14.33 | 5.01 | 7.46 |
+| C1 + 20% per-market cap | 12.13 | 6.08 | 10.64 |
+| C2 + 33% per-market cap | 14.33 | 4.75 | 7.12 |
 | C3 ensemble 40/55/80 | 11.87 | 5.74 | 4.71 |
-| C4 ensemble + 20% cap | 11.69 | 6.26 | 10.61 |
+| C4 ensemble + 20% cap | 11.67 | 6.18 | 9.45 |
 | C5 original S2 long-only | 5.17 | 3.92 | 7.70 |

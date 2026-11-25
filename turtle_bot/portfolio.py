@@ -388,6 +388,13 @@ class PortfolioBacktester:
                     if kind == "add" or risk_1 > cfg.single_share_max_risk * seq:
                         return None
                     shares, no_adds = 1, True
+                if cfg.max_position_pct is not None:
+                    # apply the per-market cap at signal time (at this close), so the
+                    # queued order, heat and unit counts reflect what can fill
+                    held = m.pos.shares * m.c[j] if m.pos is not None else 0.0
+                    shares = min(shares, math.floor(max(cfg.max_position_pct * equity - held, 0.0) / m.c[j]))
+                    if shares <= 0:
+                        return None
                 if group_units.get(m.group, 0) + 1 > cfg.group_unit_cap:
                     return None
                 if total_units + 1 > cfg.total_long_units:

@@ -1,0 +1,4 @@
+criterion,value,pass
+P1 excess Sharpe > 0,0.48,True
+P2 <= 10% of random entries (with trend filter) beat it,4%,True
+P3 excess Sharpe > 0 in >= 7 of 9 grid cells,9 of 9,True

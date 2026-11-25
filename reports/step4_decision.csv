@@ -1,0 +1,4 @@
+step,result,why
+selection (2008–2017),C5 original S2 long-only,highest 2008–2017 excess Sharpe (0.39 vs 0.28)
+hold-out (2018–2026),0.55 vs baseline 0.68 (-0.13),adoption needs ≥ +0.05
+DECISION,keep the rulebook as written,pre-registered rule

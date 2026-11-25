@@ -6,6 +6,8 @@ SPY. **No live-money broker connection. The only broker code is an Alpaca *paper
 Current stage: signals and simulation on SPY daily prices. Later stages: CALL/PUT
 contracts (60–90 DTE), historical option data, and portfolio risk management.
 
+See **[STEP4.md](STEP4.md)** for the pre-registered optimization (result: keep the rulebook as written).
+
 See **[ALPACA.md](ALPACA.md)** for the Alpaca **paper**-trading bot (simulated money; it cannot reach a live account unless its code is deliberately edited).
 
 See **[PAPER.md](PAPER.md)** for the daily paper-trading routine (no broker, no orders).
@@ -63,6 +65,7 @@ scripts/
   step1_compare.py   effect of the drawdown rule, S1+S2 and cash interest
   step2_multi_etf.py out-of-sample test on 8 ETFs, random benchmark, basket
   step3_modern.py    Modern Turtle rulebook test (pre-registered criteria)
+  step4_optimize.py  pre-registered optimization: select on 2008-17, one hold-out run on 2018-26
   paper_report.py    daily paper-trading report (orders for the next session)
   alpaca_bot.py      Alpaca PAPER bot: status / evening / morning, dry run unless --execute
 paper/               paper-trading config, archived daily reports, journal

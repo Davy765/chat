@@ -95,9 +95,10 @@ def s2_sleeves(data, rate, start):
     bt = TurtleBacktester(TurtleConfig(system="S2", allow_short=False, initial_equity=per))
     for t, df in data.items():
         df = df[df["Volume"] > 0]
-        go = max(pd.Timestamp(start), first_liquid(df))
+        liquid = first_liquid(df)
         sleeve = per * tbill / tbill.iloc[0]
-        if go <= ref_index[-1]:
+        go = max(pd.Timestamp(start), liquid) if pd.notna(liquid) else None   # never liquid: T-bills
+        if go is not None and go <= ref_index[-1]:
             eq = bt.run(df, cash_rate=rate, start=str(go.date())).equity.reindex(ref_index).ffill()
             at_go = sleeve.loc[:go].iloc[-1]
             live = eq[eq.index >= go] / per * at_go

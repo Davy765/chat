@@ -4,6 +4,13 @@ Date: 2026-11-25 · Data: SPY daily 1993-01-29 → 2026-11-25 (dividend-adjusted
 Full tables: [`reports/robustness.md`](reports/robustness.md) (regenerate with
 `python scripts/robustness.py data/SPY.csv`, ~20 s).
 
+> **Note (step 1):** the figures in this document and in `reports/robustness.md` were produced by the v1
+> engine settings: no drawdown rule and no interest on cash. They can be
+> reproduced with `drawdown_rule=False` (`--no-dd-rule`). Equity and trades
+> are unchanged by later versions. One exception: R-multiples were later
+> redefined against a full unit (see STEP1.md), which moves S1's average R
+> from −0.09 to −0.10. The −2.52R worst case is unchanged.
+
 **No rules were changed.** Every test below uses the v1 engine audited in
 `AUDIT.md` (stop-order fills, worst-case intrabar ordering, 2 bp slippage,
 1x gross cap). Parameters were varied only to measure sensitivity, not to

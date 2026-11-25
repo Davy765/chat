@@ -57,8 +57,14 @@ def stats(eq: pd.Series) -> dict:
             "sharpe": r.mean() / r.std() * np.sqrt(TD) if r.std() > 0 else 0.0}
 
 
+# The published report (ROBUSTNESS.md) was produced with the v1 engine
+# settings: no drawdown rule, no interest on cash. Pin them so the report
+# stays reproducible; pass drawdown_rule=True to test the complete rules.
+V1 = dict(drawdown_rule=False)
+
+
 def run(df, **kw):
-    return TurtleBacktester(TurtleConfig(**kw)).run(df)
+    return TurtleBacktester(TurtleConfig(**{**V1, **kw})).run(df)
 
 
 def md(df: pd.DataFrame, floatfmt=".2f") -> str:
@@ -81,8 +87,8 @@ class RandomEntryBacktester(TurtleBacktester):
         super().__init__(config)
         self.p, self.seed = p, seed
 
-    def _channels(self, df):
-        ent_hi, ent_lo, ex_hi, ex_lo, fs_hi, fs_lo = super()._channels(df)
+    def _channels(self, df, cfg):
+        ent_hi, ent_lo, ex_hi, ex_lo, fs_hi, fs_lo = super()._channels(df, cfg)
         rng = np.random.default_rng(self.seed)
         fire = rng.random(len(df)) < self.p
         rand_hi = np.where(fire, -np.inf, np.inf)
@@ -188,7 +194,7 @@ def section_e(curves, train_years=8, test_years=2):
 def section_f(df, n_seeds=200):
     rows = []
     for label, e, x in [("20/10", 20, 10), ("55/20", 55, 20)]:
-        cfg = TurtleConfig(system="S2", entry_len=e, exit_len=x, allow_short=False)
+        cfg = TurtleConfig(system="S2", entry_len=e, exit_len=x, allow_short=False, **V1)
         real = TurtleBacktester(cfg).run(df)
         real_s = stats(real.equity.loc["1994":])
         flat_ready = int(((real.daily["position"] == 0) & real.daily["entry_hi"].notna()).sum())

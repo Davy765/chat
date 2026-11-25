@@ -31,7 +31,8 @@ def summarize(res: BacktestResult, prices: pd.DataFrame | None = None) -> dict:
         "cagr_pct": round(100 * cagr, 2),
         "max_drawdown_pct": round(100 * max_drawdown(eq), 2),
         "sharpe": round(float(sharpe), 2),
-        "exposure_pct": round(100 * float((res.daily["position"] != 0).mean()), 1),
+        "exposure_pct": round(100 * float((res.daily["gross_position"] != 0).mean()), 1),
+        "interest_earned": round(float(res.daily["interest"].sum()), 2),
         "trades": len(tf),
     }
     if len(tf):
@@ -44,12 +45,14 @@ def summarize(res: BacktestResult, prices: pd.DataFrame | None = None) -> dict:
             "same_bar_stop_trades": int(tf.same_bar_stop.sum()),
             "long_trades": int((tf.direction > 0).sum()),
             "short_trades": int((tf.direction < 0).sum()),
+            **({f"trades_{k}": int(v) for k, v in tf.system.value_counts().items()}
+               if tf.system.nunique() > 1 else {}),
         })
     if prices is not None:
         px = prices["Close"].loc[eq.index[0]:eq.index[-1]]
         bh = px.iloc[-1] / px.iloc[0] - 1
         out["buy_hold_return_pct"] = round(100 * bh, 2)
         out["buy_hold_max_dd_pct"] = round(100 * max_drawdown(px), 2)
-    if res.open_position:
-        out["open_position"] = res.open_position
+    if res.open_positions:
+        out["open_positions"] = res.open_positions
     return out

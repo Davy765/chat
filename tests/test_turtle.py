@@ -233,3 +233,131 @@ def test_adjust_ohlc_scales_all_columns():
 def test_validate_rejects_bad_ohlc():
     with pytest.raises(ValueError):
         validate_ohlc(bars([(10, 9, 8, 10)]))
+
+
+# ======================================================= step 1 additions
+# ---------------------------------------------------------- drawdown rule
+@pytest.mark.parametrize("equity,expected", [
+    (100_000, 100_000), (95_000, 95_000),           # < 10% down: actual equity
+    (90_000, 80_000), (85_000, 80_000),             # 10-20% down: 80% of reference
+    (80_000, 64_000), (75_000, 64_000),             # 20-30% down: 64%
+    (120_000, 120_000),                             # above reference
+])
+def test_drawdown_rule_sizing_equity(equity, expected):
+    bt = TurtleBacktester(TurtleConfig())
+    assert math.isclose(bt._sizing_equity(equity, 100_000), expected)
+
+
+def test_drawdown_rule_off_uses_actual_equity():
+    assert TurtleBacktester(TurtleConfig(drawdown_rule=False))._sizing_equity(85_000, 100_000) == 85_000
+
+
+@pytest.mark.parametrize("ref", ["year_start", "initial", "peak"])
+def test_sizing_equity_series_matches_rule(ref):
+    """Recompute the sizing basis independently from the equity curve."""
+    df = synthetic_ohlc(1500, seed=4, vol=0.016)
+    res = TurtleBacktester(TurtleConfig(dd_reference=ref)).run(df)
+    eq, sizing = res.equity.to_numpy(), res.daily["sizing_equity"].to_numpy()
+    bt = TurtleBacktester(TurtleConfig(dd_reference=ref))
+    r = 100_000.0
+    for i in range(1, len(df)):
+        if ref == "year_start" and df.index[i].year != df.index[i - 1].year:
+            r = eq[i - 1]
+        elif ref == "peak":
+            r = max(r, eq[i - 1])
+        assert math.isclose(sizing[i], bt._sizing_equity(eq[i - 1], r))
+
+
+def test_drawdown_rule_shrinks_units_after_losses():
+    df = synthetic_ohlc(2000, seed=9, vol=0.016, drift=-0.0004)
+    on = TurtleBacktester(TurtleConfig(max_leverage=100)).run(df)
+    off = TurtleBacktester(TurtleConfig(max_leverage=100, drawdown_rule=False)).run(df)
+    assert (on.daily["sizing_equity"] < on.equity.shift(1) - 1e-6).any()
+    assert not (off.daily["sizing_equity"] < off.equity.shift(1) - 1e-6).any()
+
+
+# ------------------------------------------------------------- S1 + S2
+def test_combined_trades_both_systems_in_one_account():
+    df = synthetic_ohlc(2500, seed=12, vol=0.014)
+    res = TurtleBacktester(TurtleConfig(system="S1+S2")).run(df)
+    systems = set(res.trades_frame().system)
+    assert systems == {"S1", "S2"}
+
+
+def test_combined_respects_gross_leverage_cap():
+    df = synthetic_ohlc(2500, seed=12, vol=0.014)
+    res = TurtleBacktester(TurtleConfig(system="S1+S2", max_leverage=1.0)).run(df)
+    d = res.daily
+    # gross shares <= cap * prior equity / cheapest price traded that day
+    bound = 1.0 * d["equity"].shift(1) / df["Low"]
+    held_before = d["gross_position"].shift(1).fillna(0)
+    new_or_flat = d["gross_position"] <= np.maximum(bound, held_before) + 1
+    assert new_or_flat.iloc[1:].all()
+
+
+def test_combined_rejects_custom_channels():
+    with pytest.raises(ValueError):
+        TurtleConfig(system="S1+S2", entry_len=30).resolved()
+
+
+def test_r_multiple_uses_full_unit_when_first_fill_is_capped():
+    df = synthetic_ohlc(2500, seed=12, vol=0.014)
+    res = TurtleBacktester(TurtleConfig(system="S1+S2")).run(df)
+    assert res.trades_frame().r_multiple.abs().max() < 30
+
+
+# ----------------------------------------------------------- cash interest
+def test_interest_on_idle_cash_compounds_daily():
+    df = flat_then([(100, 100.5, 99.5, 100)] * 200)   # never breaks out
+    rate = pd.Series(5.0, index=df.index)
+    res = TurtleBacktester(TurtleConfig()).run(df, cash_rate=rate)
+    days = np.diff(df.index.to_numpy()).astype("timedelta64[D]").astype(int)
+    expected = 100_000 * np.prod(1 + 0.05 * days / 365)  # day-0 rate usable from day 1
+    assert len(res.trades) == 0
+    assert math.isclose(res.equity.iloc[-1], expected, rel_tol=1e-12)
+
+
+def test_interest_uses_previous_days_rate():
+    df = flat_then([(100, 100.5, 99.5, 100)] * 20)
+    rate = pd.Series(0.0, index=df.index)
+    rate.iloc[-1] = 50.0                                   # published on the last day
+    res = TurtleBacktester(TurtleConfig()).run(df, cash_rate=rate)
+    assert res.equity.iloc[-1] == 100_000                  # not usable until the next bar
+
+
+def test_interest_only_on_idle_equity():
+    df = synthetic_ohlc(1500, seed=2, vol=0.014)
+    rate = pd.Series(4.0, index=df.index)
+    res = TurtleBacktester(TurtleConfig(allow_short=False)).run(df, cash_rate=rate)
+    d = res.daily
+    idle = (d["equity"].shift(1) - d["gross_position"].shift(1) * df["Close"].shift(1)).clip(lower=0)
+    dt = pd.Series(df.index, index=df.index).diff().dt.days
+    expected = (idle * 0.04 * dt / 365).fillna(0)          # day-0 rate usable from day 1
+    np.testing.assert_allclose(d["interest"].to_numpy(), expected.to_numpy(), rtol=1e-12, atol=1e-9)
+
+
+# ------------------------------------------- look-ahead with all features on
+@pytest.mark.parametrize("cut", [300, 901])
+def test_no_lookahead_complete_rules(cut):
+    df = synthetic_ohlc(1200, seed=31, vol=0.015)
+    rate = pd.Series(np.linspace(1, 6, len(df)), index=df.index)
+    cfg = TurtleConfig(system="S1+S2", dd_reference="peak")
+    full = TurtleBacktester(cfg).run(df, cash_rate=rate)
+    part = TurtleBacktester(cfg).run(df.iloc[:cut], cash_rate=rate.iloc[:cut])
+    pd.testing.assert_series_equal(full.equity.iloc[:cut], part.equity, check_freq=False)
+    closed = [t.__dict__ for t in full.trades if t.exit_date <= df.index[cut - 1]]
+    assert closed == [t.__dict__ for t in part.trades]
+
+
+@pytest.mark.parametrize("seed", [0, 3])
+def test_equity_identity_complete_rules(seed):
+    """equity = initial + closed P&L + open P&L + interest."""
+    comm = 0.005
+    df = synthetic_ohlc(1500, seed=seed, vol=0.014)
+    rate = pd.Series(3.0, index=df.index)
+    res = TurtleBacktester(TurtleConfig(system="S1+S2", commission_per_share=comm)).run(df, cash_rate=rate)
+    closed = sum(t.pnl for t in res.trades)
+    open_pnl = sum(op["direction"] * (df["Close"].iloc[-1] - op["avg_entry"]) * op["shares"]
+                   - op["shares"] * comm for op in res.open_positions)
+    interest = res.daily["interest"].sum()
+    assert math.isclose(res.equity.iloc[-1], 100_000 + closed + open_pnl + interest, rel_tol=1e-9)

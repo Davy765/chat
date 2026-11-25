@@ -72,3 +72,14 @@ def synthetic_ohlc(n: int = 1500, seed: int = 0, start_price: float = 100.0,
     lo = np.minimum(open_, close) * np.exp(-np.abs(rng.normal(0, vol / 2, n)))
     idx = pd.bdate_range("2010-01-01", periods=n)
     return pd.DataFrame({"Open": open_, "High": hi, "Low": lo, "Close": close}, index=idx)
+
+
+def load_rate_csv(path: str) -> pd.Series:
+    """Annual cash rate in percent, indexed by date (e.g. FRED DTB3, the
+    3-month T-bill rate). FRED marks holidays with '.' or blanks; those rows
+    are dropped and the engine carries the last known value forward."""
+    raw = pd.read_csv(path)
+    date_col = raw.columns[0]
+    s = pd.to_numeric(raw.iloc[:, 1], errors="coerce")
+    s.index = pd.to_datetime(raw[date_col])
+    return s.dropna().sort_index().rename("cash_rate_pct")

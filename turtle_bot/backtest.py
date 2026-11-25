@@ -1,5 +1,9 @@
 """Daily-bar Turtle simulator for a single instrument (SPY).
 
+One account (cash, equity, drawdown rule, leverage cap) holds one "book" per
+system traded: S1, S2, or both. Each book has its own channels, position and
+S1 skip-filter shadow trade.
+
 Fill model (all orders are resting STOP orders, like the original Turtles):
 
 * Entry levels (Donchian channel of the previous L days), the protective stop
@@ -10,8 +14,8 @@ Fill model (all orders are resting STOP orders, like the original Turtles):
 * Slippage (bps) and commission are applied to every fill, always against us.
 
 Information available on day t: OHLC of bars 0..t-1, N of day t-1, equity at
-the close of day t-1, and the intraday path of bar t only through stop levels
-that were already set before the open.
+the close of day t-1, the cash rate published by day t-1, and the intraday
+path of bar t only through stop levels that were already set before the open.
 
 Daily bars do not tell us the ORDER of the high and the low. Wherever the
 order matters we take the pessimistic path:
@@ -23,6 +27,8 @@ order matters we take the pessimistic path:
    the new 2N stop. If touched, we assume we were stopped out the same day.
 3. A bar that breaks BOTH the upper and lower entry channel is skipped.
 4. No re-entry on the same bar as an exit.
+5. With several books, every book manages its open position (exits, adds)
+   before any book opens a new one.
 """
 
 from __future__ import annotations
@@ -52,6 +58,7 @@ class Trade:
     exit_reason: str
     entry_reason: str
     same_bar_stop: bool
+    system: str = ""
 
 
 @dataclass
@@ -68,7 +75,7 @@ class _Position:
     units: int = 0
     last_fill: float = 0.0       # raw (pre-slippage) fill of the last unit
     stop: float = 0.0
-    risk_dollars: float = 0.0    # 2N * first-unit shares * point value
+    risk_dollars: float = 0.0    # 2N * one full unit's shares * point value
     same_bar_stop: bool = False
 
 
@@ -83,16 +90,53 @@ class _Hypothetical:
 
 
 @dataclass
+class _Book:
+    """One system's state inside the shared account."""
+    cfg: TurtleConfig
+    weight: float
+    n: np.ndarray
+    ent_hi: np.ndarray
+    ent_lo: np.ndarray
+    ex_hi: np.ndarray
+    ex_lo: np.ndarray
+    fs_hi: np.ndarray
+    fs_lo: np.ndarray
+    pos: _Position | None = None
+    hyp: _Hypothetical = field(default_factory=_Hypothetical)
+    exited_today: bool = False
+
+    @property
+    def name(self) -> str:
+        return self.cfg.system
+
+    def ready(self, i: int) -> bool:
+        return not (np.isnan(self.n[i - 1]) or np.isnan(self.ent_hi[i]) or np.isnan(self.ex_hi[i])
+                    or (self.cfg.uses_failsafe and np.isnan(self.fs_hi[i])))
+
+
+@dataclass
 class BacktestResult:
     equity: pd.Series
     trades: list[Trade]
     daily: pd.DataFrame
     config: TurtleConfig
-    open_position: dict | None = None
+    open_position: dict | None = None          # first open position (single-system convenience)
     log: list[str] = field(default_factory=list)
+    open_positions: list[dict] = field(default_factory=list)
 
     def trades_frame(self) -> pd.DataFrame:
         return pd.DataFrame([t.__dict__ for t in self.trades])
+
+
+def align_cash_rate(rate: pd.Series | None, index: pd.DatetimeIndex) -> np.ndarray:
+    """Annual cash rate in percent, as KNOWN before each bar opens: the last
+    value published on or before the PREVIOUS trading day. Missing history
+    before the series starts counts as 0%."""
+    if rate is None:
+        return np.zeros(len(index))
+    r = rate.dropna().sort_index()
+    known = r.reindex(r.index.union(index)).ffill().reindex(index)
+    return known.shift(1).fillna(0.0).to_numpy(float)
 
 
 class TurtleBacktester:
@@ -104,14 +148,42 @@ class TurtleBacktester:
         """side=+1 buy, -1 sell. Slippage always hurts."""
         return price * (1 + side * self.cfg.slippage_bps / 1e4)
 
-    def _buy_stop_fill(self, level: float, open_: float) -> float:
+    @staticmethod
+    def _buy_stop_fill(level: float, open_: float) -> float:
         return max(level, open_)
 
-    def _sell_stop_fill(self, level: float, open_: float) -> float:
+    @staticmethod
+    def _sell_stop_fill(level: float, open_: float) -> float:
         return min(level, open_)
 
+    # ------------------------------------------------------------- channels
+    def _channels(self, df: pd.DataFrame, cfg: TurtleConfig) -> tuple[np.ndarray, ...]:
+        """Entry, exit and failsafe channel levels for one system, each known
+        before the bar opens. Separate method so research code can substitute
+        entry levels (e.g. the random-entry benchmark) without touching the
+        fill logic."""
+        ent_hi, ent_lo = (s.to_numpy() for s in donchian(df, cfg.entry_len))
+        ex_hi, ex_lo = (s.to_numpy() for s in donchian(df, cfg.exit_len))
+        if cfg.uses_failsafe:
+            fs_hi, fs_lo = (s.to_numpy() for s in donchian(df, cfg.failsafe_len))
+        else:
+            fs_hi = fs_lo = np.full(len(df), np.nan)
+        return ent_hi, ent_lo, ex_hi, ex_lo, fs_hi, fs_lo
+
+    # ---------------------------------------------------- drawdown rule
+    def _sizing_equity(self, equity: float, reference: float) -> float:
+        """Original rule: every full ``dd_step`` drawdown below the reference
+        cuts the notional account used for sizing by ``dd_cut``."""
+        cfg = self.cfg
+        if not cfg.drawdown_rule or equity >= reference:
+            return equity
+        k = math.floor((1 - equity / reference) / cfg.dd_step + 1e-12)
+        return equity if k == 0 else reference * (1 - cfg.dd_cut) ** k
+
     # ------------------------------------------------------------------- run
-    def run(self, df: pd.DataFrame) -> BacktestResult:
+    def run(self, df: pd.DataFrame, cash_rate: pd.Series | None = None) -> BacktestResult:
+        """``cash_rate``: optional annual rate in percent (e.g. 3-month T-bill)
+        paid on idle equity, i.e. equity not tied up in positions."""
         cfg = self.cfg
         pv = cfg.point_value
         o = df["Open"].to_numpy(float)
@@ -119,25 +191,32 @@ class TurtleBacktester:
         l = df["Low"].to_numpy(float)
         c = df["Close"].to_numpy(float)
         dates = df.index
-
+        rate = align_cash_rate(cash_rate, dates)
         n_series = wilder_atr(df, cfg.atr_len).to_numpy()
-        ent_hi, ent_lo, ex_hi, ex_lo, fs_hi, fs_lo = self._channels(df)
+
+        books = [_Book(bcfg, w, n_series, *self._channels(df, bcfg)) for bcfg, w in cfg.books()]
 
         cash = cfg.initial_equity
-        pos: _Position | None = None
-        hyp = _Hypothetical()
         trades: list[Trade] = []
         log: list[str] = []
-        equity = np.full(len(df), np.nan)
-        qty_hist = np.zeros(len(df))
-        stop_hist = np.full(len(df), np.nan)
+        size = len(df)
+        equity = np.full(size, np.nan)
+        net_hist, gross_hist = np.zeros(size), np.zeros(size)
+        stop_hist = np.full(size, np.nan)
+        sizing_hist = np.full(size, np.nan)
+        interest_hist = np.zeros(size)
         prev_equity = cfg.initial_equity
+        dd_ref = cfg.initial_equity
 
         def commission(shares: float) -> float:
             return abs(shares) * cfg.commission_per_share
 
-        def add_unit(p: _Position, raw_px: float, shares: float) -> None:
+        def gross_shares() -> float:
+            return sum(b.pos.shares for b in books if b.pos is not None)
+
+        def add_unit(b: _Book, raw_px: float, shares: float) -> None:
             nonlocal cash
+            p = b.pos
             fill = self._slip(raw_px, p.direction)
             comm = commission(shares)
             cash -= p.direction * shares * fill * pv + comm
@@ -148,10 +227,11 @@ class TurtleBacktester:
             p.units += 1
             p.last_fill = raw_px
             # Original rule: all units' stops move to 2N from the latest unit.
-            p.stop = raw_px - p.direction * cfg.stop_n * p.n
+            p.stop = raw_px - p.direction * b.cfg.stop_n * p.n
 
-        def close_position(p: _Position, i: int, raw_px: float, reason: str) -> None:
-            nonlocal cash, pos
+        def close_position(b: _Book, i: int, raw_px: float, reason: str) -> None:
+            nonlocal cash
+            p = b.pos
             fill = self._slip(raw_px, -p.direction)
             comm = commission(p.shares)
             cash += p.direction * p.shares * fill * pv - comm
@@ -166,155 +246,171 @@ class TurtleBacktester:
                 pnl=pnl, costs=p.costs,
                 r_multiple=pnl / p.risk_dollars if p.risk_dollars else np.nan,
                 exit_reason=reason, entry_reason=p.entry_reason,
-                same_bar_stop=p.same_bar_stop,
+                same_bar_stop=p.same_bar_stop, system=b.name,
             ))
-            pos = None
+            b.pos = None
 
-        def exit_level(p: _Position, i: int) -> tuple[float, str]:
+        def exit_level(b: _Book, i: int) -> tuple[float, str]:
+            p = b.pos
             if p.direction > 0:
-                ch = ex_lo[i]
+                ch = b.ex_lo[i]
                 return (p.stop, "stop_2N") if p.stop >= ch else (ch, "exit_channel")
-            ch = ex_hi[i]
+            ch = b.ex_hi[i]
             return (p.stop, "stop_2N") if p.stop <= ch else (ch, "exit_channel")
 
-        def pyramid(p: _Position, i: int, equity_ref: float) -> None:
-            while p.units < cfg.max_units:
-                nxt = p.last_fill + p.direction * cfg.pyramid_n * p.n
+        def pyramid(b: _Book, i: int) -> None:
+            p = b.pos
+            while p.units < b.cfg.max_units:
+                nxt = p.last_fill + p.direction * b.cfg.pyramid_n * p.n
                 hit = h[i] >= nxt if p.direction > 0 else l[i] <= nxt
                 if not hit:
                     return
                 raw = self._buy_stop_fill(nxt, o[i]) if p.direction > 0 else self._sell_stop_fill(nxt, o[i])
-                shares = self._cap_shares(p.unit_shares, raw, p.shares, equity_ref)
+                shares = self._cap_shares(p.unit_shares, raw, gross_shares(), prev_equity)
                 if shares <= 0:
                     return
-                add_unit(p, raw, shares)
+                add_unit(b, raw, shares)
 
-        def intrabar_exit(p: _Position, i: int) -> bool:
-            lvl, why = exit_level(p, i)
-            touched = l[i] <= lvl if p.direction > 0 else h[i] >= lvl
+        def intrabar_exit(b: _Book, i: int) -> bool:
+            lvl, why = exit_level(b, i)
+            touched = l[i] <= lvl if b.pos.direction > 0 else h[i] >= lvl
             if touched:
-                close_position(p, i, lvl, why)
+                close_position(b, i, lvl, why)
                 return True
             return False
 
-        for i in range(1, len(df)):
-            n_prev = n_series[i - 1]
-            ready = not (np.isnan(n_prev) or np.isnan(ent_hi[i]) or np.isnan(ex_hi[i])
-                         or (cfg.uses_failsafe and np.isnan(fs_hi[i])))
-            exited_today = False
+        def manage(b: _Book, i: int) -> None:
+            b.exited_today = False
+            if b.pos is None:
+                return
+            lvl, why = exit_level(b, i)
+            gapped = o[i] <= lvl if b.pos.direction > 0 else o[i] >= lvl
+            if gapped:
+                close_position(b, i, o[i], why + "_gap")
+                b.exited_today = True
+            else:
+                pyramid(b, i)
+                b.exited_today = intrabar_exit(b, i)
 
-            # ---- 1) manage the open position -------------------------------
-            if pos is not None:
-                lvl, why = exit_level(pos, i)
-                gapped = o[i] <= lvl if pos.direction > 0 else o[i] >= lvl
-                if gapped:
-                    close_position(pos, i, o[i], why + "_gap")
-                    exited_today = True
-                else:
-                    pyramid(pos, i, prev_equity)
-                    exited_today = intrabar_exit(pos, i)
+        def shadow_exit(b: _Book, i: int) -> bool:
+            hyp = b.hyp
+            if b.name != "S1" or hyp.direction == 0:
+                return False
+            d = hyp.direction
+            ch = b.ex_lo[i] if d > 0 else b.ex_hi[i]
+            lvl = max(hyp.stop, ch) if d > 0 else min(hyp.stop, ch)
+            px = None
+            if (o[i] <= lvl) if d > 0 else (o[i] >= lvl):
+                px = o[i]
+            elif (l[i] <= lvl) if d > 0 else (h[i] >= lvl):
+                px = lvl
+            if px is None:
+                return False
+            hyp.last_was_winner = d * (px - hyp.entry) > 0
+            hyp.direction = 0
+            return True
 
-            # ---- 2) shadow trade for the S1 skip filter ---------------------
-            hyp_exited = False
-            if ready and cfg.system == "S1" and hyp.direction != 0:
-                d = hyp.direction
-                ch = ex_lo[i] if d > 0 else ex_hi[i]
-                lvl = max(hyp.stop, ch) if d > 0 else min(hyp.stop, ch)
-                px = None
-                if (o[i] <= lvl) if d > 0 else (o[i] >= lvl):
-                    px = o[i]
-                elif (l[i] <= lvl) if d > 0 else (h[i] >= lvl):
-                    px = lvl
-                if px is not None:
-                    hyp.last_was_winner = d * (px - hyp.entry) > 0
-                    hyp.direction = 0
-                    hyp_exited = True
+        def enter(b: _Book, i: int, sizing_equity: float) -> None:
+            bc = b.cfg
+            n_prev = b.n[i - 1]
+            hyp_exited = shadow_exit(b, i)
+            long_brk = h[i] > b.ent_hi[i]
+            short_brk = l[i] < b.ent_lo[i] and bc.allow_short
+            filter_ok = not (bc.system == "S1" and bc.use_skip_filter and b.hyp.last_was_winner)
 
-            if not ready:
-                equity[i] = cash + (pos.direction * pos.shares * c[i] * pv if pos else 0.0)
-                prev_equity = equity[i]
-                continue
-
-            long_brk = h[i] > ent_hi[i]
-            short_brk = l[i] < ent_lo[i] and cfg.allow_short
-            filter_ok = not (cfg.system == "S1" and cfg.use_skip_filter and hyp.last_was_winner)
-
-            # ---- 3) new entry --------------------------------------------
-            if pos is None and not exited_today:
+            if b.pos is None and not b.exited_today:
                 cand = []
                 if long_brk and filter_ok:
-                    cand.append((1, ent_hi[i], f"{cfg.system}_{cfg.entry_len}d"))
-                elif cfg.uses_failsafe and h[i] > fs_hi[i]:
-                    cand.append((1, fs_hi[i], f"failsafe_{cfg.failsafe_len}d"))
+                    cand.append((1, b.ent_hi[i], f"{bc.system}_{bc.entry_len}d"))
+                elif bc.uses_failsafe and h[i] > b.fs_hi[i]:
+                    cand.append((1, b.fs_hi[i], f"failsafe_{bc.failsafe_len}d"))
                 if short_brk and filter_ok:
-                    cand.append((-1, ent_lo[i], f"{cfg.system}_{cfg.entry_len}d"))
-                elif cfg.uses_failsafe and cfg.allow_short and l[i] < fs_lo[i]:
-                    cand.append((-1, fs_lo[i], f"failsafe_{cfg.failsafe_len}d"))
+                    cand.append((-1, b.ent_lo[i], f"{bc.system}_{bc.entry_len}d"))
+                elif bc.uses_failsafe and bc.allow_short and l[i] < b.fs_lo[i]:
+                    cand.append((-1, b.fs_lo[i], f"failsafe_{bc.failsafe_len}d"))
 
                 if len(cand) == 2:
-                    log.append(f"{dates[i].date()}: bar broke both channels, skipped (ambiguous)")
+                    log.append(f"{dates[i].date()} {b.name}: bar broke both channels, skipped (ambiguous)")
                 elif len(cand) == 1:
                     d, level, reason = cand[0]
                     raw = self._buy_stop_fill(level, o[i]) if d > 0 else self._sell_stop_fill(level, o[i])
-                    unit = self._unit_shares(prev_equity, n_prev)
-                    shares = self._cap_shares(unit, raw, 0.0, prev_equity)
+                    unit = self._unit_shares(sizing_equity * b.weight, n_prev)
+                    shares = self._cap_shares(unit, raw, gross_shares(), prev_equity)
                     if shares > 0:
-                        pos = _Position(direction=d, n=n_prev, entry_date=dates[i],
-                                        entry_reason=reason, unit_shares=unit)
-                        add_unit(pos, raw, shares)
-                        pos.risk_dollars = cfg.stop_n * n_prev * shares * pv
-                        pyramid(pos, i, prev_equity)
-                        if intrabar_exit(pos, i):
+                        b.pos = _Position(direction=d, n=n_prev, entry_date=dates[i],
+                                          entry_reason=reason, unit_shares=unit)
+                        add_unit(b, raw, shares)
+                        # 1R = 2N risk of one FULL unit, even if the leverage
+                        # cap clipped the first fill (later units can be full).
+                        b.pos.risk_dollars = bc.stop_n * n_prev * unit * pv
+                        pyramid(b, i)
+                        if intrabar_exit(b, i):
                             trades[-1].same_bar_stop = True
-                            log.append(f"{dates[i].date()}: entry and stop on the same bar "
+                            log.append(f"{dates[i].date()} {b.name}: entry and stop on the same bar "
                                        f"(assumed stopped out, pessimistic)")
                     else:
-                        log.append(f"{dates[i].date()}: signal skipped, size rounds to 0 shares")
+                        log.append(f"{dates[i].date()} {b.name}: signal skipped, size rounds to 0 shares")
 
-            # ---- 4) shadow trade entry (every 20-day breakout) --------------
-            if cfg.system == "S1" and hyp.direction == 0 and not hyp_exited:
-                if long_brk != short_brk:
-                    d = 1 if long_brk else -1
-                    level = ent_hi[i] if d > 0 else ent_lo[i]
-                    px = self._buy_stop_fill(level, o[i]) if d > 0 else self._sell_stop_fill(level, o[i])
-                    hyp.direction, hyp.entry = d, px
-                    hyp.stop = px - d * cfg.stop_n * n_prev
-                    if (l[i] <= hyp.stop) if d > 0 else (h[i] >= hyp.stop):
-                        hyp.last_was_winner = False
-                        hyp.direction = 0
+            # shadow trade entry (every S1 breakout, taken or not)
+            if b.name == "S1" and b.hyp.direction == 0 and not hyp_exited and long_brk != short_brk:
+                d = 1 if long_brk else -1
+                level = b.ent_hi[i] if d > 0 else b.ent_lo[i]
+                px = self._buy_stop_fill(level, o[i]) if d > 0 else self._sell_stop_fill(level, o[i])
+                b.hyp.direction, b.hyp.entry = d, px
+                b.hyp.stop = px - d * bc.stop_n * n_prev
+                if (l[i] <= b.hyp.stop) if d > 0 else (h[i] >= b.hyp.stop):
+                    b.hyp.last_was_winner = False
+                    b.hyp.direction = 0
 
-            qty_hist[i] = pos.direction * pos.shares if pos else 0.0
-            stop_hist[i] = pos.stop if pos else np.nan
-            equity[i] = cash + (pos.direction * pos.shares * c[i] * pv if pos else 0.0)
+        for i in range(1, size):
+            # ---- before the open: interest and sizing basis -----------------
+            if rate[i]:
+                idle = max(prev_equity - gross_shares() * c[i - 1] * pv, 0.0)
+                accrued = idle * rate[i] / 100 * (dates[i] - dates[i - 1]).days / 365
+                cash += accrued
+                interest_hist[i] = accrued
+            if cfg.dd_reference == "year_start" and dates[i].year != dates[i - 1].year:
+                dd_ref = prev_equity
+            elif cfg.dd_reference == "peak":
+                dd_ref = max(dd_ref, prev_equity)
+            sizing = self._sizing_equity(prev_equity, dd_ref)
+            sizing_hist[i] = sizing
+
+            # ---- during the bar --------------------------------------------
+            for b in books:
+                manage(b, i)
+            for b in books:
+                if b.ready(i):
+                    enter(b, i, sizing)
+
+            # ---- at the close ----------------------------------------------
+            net = sum(b.pos.direction * b.pos.shares for b in books if b.pos is not None)
+            net_hist[i] = net
+            gross_hist[i] = gross_shares()
+            if books[0].pos is not None:
+                stop_hist[i] = books[0].pos.stop
+            equity[i] = cash + net * c[i] * pv
             prev_equity = equity[i]
 
         equity[0] = cfg.initial_equity
         eq = pd.Series(equity, index=dates, name="equity")
-        daily = pd.DataFrame({"equity": eq, "position": qty_hist, "stop": stop_hist,
-                              "N": n_series, "entry_hi": ent_hi, "entry_lo": ent_lo,
-                              "exit_hi": ex_hi, "exit_lo": ex_lo}, index=dates)
-        open_pos = None
-        if pos is not None:
-            open_pos = {"direction": pos.direction, "entry_date": pos.entry_date,
-                        "units": pos.units, "shares": pos.shares,
-                        "avg_entry": pos.cost_basis / pos.shares, "stop": pos.stop,
-                        "unrealized_pnl": pos.direction * (c[-1] - pos.cost_basis / pos.shares)
-                        * pos.shares * pv}
-        return BacktestResult(eq, trades, daily, cfg, open_pos, log)
-
-    # ------------------------------------------------------------- channels
-    def _channels(self, df: pd.DataFrame) -> tuple[np.ndarray, ...]:
-        """Entry, exit and failsafe channel levels, each known before the bar
-        opens. Separate method so research code can substitute entry levels
-        (e.g. the random-entry benchmark) without touching the fill logic."""
-        cfg = self.cfg
-        ent_hi, ent_lo = (s.to_numpy() for s in donchian(df, cfg.entry_len))
-        ex_hi, ex_lo = (s.to_numpy() for s in donchian(df, cfg.exit_len))
-        if cfg.uses_failsafe:
-            fs_hi, fs_lo = (s.to_numpy() for s in donchian(df, cfg.failsafe_len))
-        else:
-            fs_hi = fs_lo = np.full(len(df), np.nan)
-        return ent_hi, ent_lo, ex_hi, ex_lo, fs_hi, fs_lo
+        b0 = books[0]
+        daily = pd.DataFrame({"equity": eq, "position": net_hist, "gross_position": gross_hist,
+                              "stop": stop_hist, "sizing_equity": sizing_hist,
+                              "interest": interest_hist, "N": n_series,
+                              "entry_hi": b0.ent_hi, "entry_lo": b0.ent_lo,
+                              "exit_hi": b0.ex_hi, "exit_lo": b0.ex_lo}, index=dates)
+        open_positions = []
+        for b in books:
+            p = b.pos
+            if p is not None:
+                avg = p.cost_basis / p.shares
+                open_positions.append({
+                    "system": b.name, "direction": p.direction, "entry_date": p.entry_date,
+                    "units": p.units, "shares": p.shares, "avg_entry": avg, "stop": p.stop,
+                    "unrealized_pnl": p.direction * (c[-1] - avg) * p.shares * pv})
+        return BacktestResult(eq, trades, daily, cfg,
+                              open_positions[0] if open_positions else None, log, open_positions)
 
     # --------------------------------------------------------------- sizing
     def _unit_shares(self, equity: float, n: float) -> float:
@@ -323,6 +419,7 @@ class TurtleBacktester:
         return raw if self.cfg.allow_fractional else math.floor(raw)
 
     def _cap_shares(self, want: float, price: float, held: float, equity: float) -> float:
+        """``held``: gross shares already held by ALL systems in the account."""
         room = self.cfg.max_leverage * equity / (price * self.cfg.point_value) - held
         shares = min(want, max(room, 0.0))
         return shares if self.cfg.allow_fractional else math.floor(shares)

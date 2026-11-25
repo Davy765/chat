@@ -6,6 +6,8 @@ SPY. **No broker connection. Nothing here places real orders.**
 Current stage: signals and simulation on SPY daily prices. Later stages: CALL/PUT
 contracts (60–90 DTE), historical option data, and portfolio risk management.
 
+See **[STEP1.md](STEP1.md)** for the drawdown rule, S1+S2 in one account and interest on cash.
+
 See **[ROBUSTNESS.md](ROBUSTNESS.md)** for sub-period, parameter, cost, walk-forward and random-entry tests.
 
 See **[AUDIT.md](AUDIT.md)** for the technical audit: verification of Donchian
@@ -23,9 +25,12 @@ plus a defect checklist by severity.
 | Stop | 2N from the latest unit, shared by all units | same |
 | Unit | 1% of equity / (N × $ per point) | same |
 | Pyramiding | +1 unit every ½N, max 4 | same |
+| Drawdown rule | each 10% drawdown from the year-start equity → size on a 20% smaller notional account | same |
+| Both systems | `--system S1+S2`: one account, shared cash, cap and drawdown rule | |
 
 Documented deviations (see `turtle_bot/config.py`): gross leverage cap (default
 1x), slippage of 2 bp per fill, whole shares, worst-case intrabar ordering.
+Optional: interest on idle cash at the 3-month T-bill rate (`--cash-rate data/DTB3.csv`).
 
 ## Layout
 
@@ -38,9 +43,11 @@ turtle_bot/
   metrics.py     CAGR, drawdown, Sharpe, trade stats
 scripts/
   download_spy.py    fetch SPY daily data (needs yfinance)
+  download_rates.py  fetch the 3-month T-bill rate (FRED DTB3)
   run_backtest.py    run a backtest and print a summary
   inflation_demo.py  measure how common bugs inflate results
   robustness.py      sub-period / parameter / cost / walk-forward / random-entry tests
+  step1_compare.py   effect of the drawdown rule, S1+S2 and cash interest
 reports/             generated robustness tables
 tests/test_turtle.py
 ```
@@ -50,7 +57,9 @@ tests/test_turtle.py
 ```bash
 pip install -r requirements.txt
 python scripts/download_spy.py
+python scripts/download_rates.py
 python -m pytest -q
 python scripts/run_backtest.py data/SPY.csv --system S1 --start 2000-01-01
 python scripts/run_backtest.py data/SPY.csv --system S2 --no-short --max-leverage 4
+python scripts/run_backtest.py data/SPY.csv --system S1+S2 --no-short --cash-rate data/DTB3.csv
 ```

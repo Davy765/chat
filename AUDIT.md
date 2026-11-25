@@ -3,6 +3,13 @@
 Date: 2026-11-25 · Scope: signals, N/ATR, stops, look-ahead, simulator realism ·
 No broker connectivity exists or was added. Nothing here places orders.
 
+> **Note (step 1):** the figures in this document were produced by the v1
+> engine settings: no drawdown rule and no interest on cash. They can be
+> reproduced with `drawdown_rule=False` (`--no-dd-rule`). Equity and trades
+> are unchanged by later versions. One exception: R-multiples were later
+> redefined against a full unit (see STEP1.md), which moves S1's average R
+> from −0.09 to −0.10. The −2.52R worst case is unchanged.
+
 ## 0. Status of the code under review
 
 The repository contained **no bot code** when the audit started (only an empty

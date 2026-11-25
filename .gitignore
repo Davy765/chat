@@ -5,3 +5,6 @@ __pycache__/
 
 # fresh daily data for paper trading (the research snapshot in data/ stays frozen)
 data/live/
+
+# Alpaca paper bot: account-specific logs, plans and state (never commit)
+paper/alpaca/

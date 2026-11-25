@@ -1,10 +1,12 @@
 # Turtle Trading Bot — SPY (stage 1: underlying only)
 
 Research and backtesting code for the original Turtle Trading rules applied to
-SPY. **No broker connection. Nothing here places real orders.**
+SPY. **No live-money broker connection. The only broker code is an Alpaca *paper* bot (simulated money), and nothing places real orders.**
 
 Current stage: signals and simulation on SPY daily prices. Later stages: CALL/PUT
 contracts (60–90 DTE), historical option data, and portfolio risk management.
+
+See **[ALPACA.md](ALPACA.md)** for the Alpaca **paper**-trading bot (simulated money; it cannot reach a live account unless its code is deliberately edited).
 
 See **[PAPER.md](PAPER.md)** for the daily paper-trading routine (no broker, no orders).
 
@@ -49,6 +51,9 @@ turtle_bot/
   backtest.py    daily event-driven simulator
   metrics.py     CAGR, drawdown, Sharpe, trade stats
   portfolio.py   multi-market engine for the Modern Turtle rulebook
+  broker.py      Alpaca PAPER client (fixed paper URL) + in-memory fake broker
+  live.py        order planning with safety limits (pure functions)
+  bot.py         evening / morning runs of the paper bot
 scripts/
   download_etfs.py   fetch daily ETF data, completed sessions only (needs yfinance)
   download_rates.py  fetch the 3-month T-bill rate (FRED DTB3)
@@ -59,9 +64,10 @@ scripts/
   step2_multi_etf.py out-of-sample test on 8 ETFs, random benchmark, basket
   step3_modern.py    Modern Turtle rulebook test (pre-registered criteria)
   paper_report.py    daily paper-trading report (orders for the next session)
+  alpaca_bot.py      Alpaca PAPER bot: status / evening / morning, dry run unless --execute
 paper/               paper-trading config, archived daily reports, journal
 reports/             generated robustness tables
-tests/test_turtle.py, tests/test_portfolio.py
+tests/test_turtle.py, tests/test_portfolio.py, tests/test_bot.py
 ```
 
 ## Usage

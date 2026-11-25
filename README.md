@@ -6,6 +6,8 @@ SPY. **No broker connection. Nothing here places real orders.**
 Current stage: signals and simulation on SPY daily prices. Later stages: CALL/PUT
 contracts (60–90 DTE), historical option data, and portfolio risk management.
 
+See **[STEP2.md](STEP2.md)** for the out-of-sample test on 8 ETFs (SPY, QQQ, IWM, DIA, EFA, EEM, TLT, GLD).
+
 See **[STEP1.md](STEP1.md)** for the drawdown rule, S1+S2 in one account and interest on cash.
 
 See **[ROBUSTNESS.md](ROBUSTNESS.md)** for sub-period, parameter, cost, walk-forward and random-entry tests.
@@ -49,6 +51,7 @@ scripts/
   inflation_demo.py  measure how common bugs inflate results
   robustness.py      sub-period / parameter / cost / walk-forward / random-entry tests
   step1_compare.py   effect of the drawdown rule, S1+S2 and cash interest
+  step2_multi_etf.py out-of-sample test on 8 ETFs, random benchmark, basket
 reports/             generated robustness tables
 tests/test_turtle.py
 ```

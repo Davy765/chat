@@ -1,0 +1,3 @@
+rules,real_cagr_%,real_sharpe,real_trades,random_median_cagr_%,random_median_sharpe,random_median_trades,pct_random_beating_real_sharpe,pct_random_beating_real_cagr
+20/10,3.3920074484484086,0.4546105061427091,224,1.9448875660932785,0.27066100120622477,267.5,3.0,4.0
+55/20,4.183209160079127,0.5683014666429839,123,2.6039218742227033,0.3673974785776889,141.0,6.5,8.0

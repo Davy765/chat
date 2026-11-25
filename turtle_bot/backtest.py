@@ -121,12 +121,7 @@ class TurtleBacktester:
         dates = df.index
 
         n_series = wilder_atr(df, cfg.atr_len).to_numpy()
-        ent_hi, ent_lo = (s.to_numpy() for s in donchian(df, cfg.entry_len))
-        ex_hi, ex_lo = (s.to_numpy() for s in donchian(df, cfg.exit_len))
-        if cfg.uses_failsafe:
-            fs_hi, fs_lo = (s.to_numpy() for s in donchian(df, cfg.failsafe_len))
-        else:
-            fs_hi = fs_lo = np.full(len(df), np.nan)
+        ent_hi, ent_lo, ex_hi, ex_lo, fs_hi, fs_lo = self._channels(df)
 
         cash = cfg.initial_equity
         pos: _Position | None = None
@@ -306,6 +301,20 @@ class TurtleBacktester:
                         "unrealized_pnl": pos.direction * (c[-1] - pos.cost_basis / pos.shares)
                         * pos.shares * pv}
         return BacktestResult(eq, trades, daily, cfg, open_pos, log)
+
+    # ------------------------------------------------------------- channels
+    def _channels(self, df: pd.DataFrame) -> tuple[np.ndarray, ...]:
+        """Entry, exit and failsafe channel levels, each known before the bar
+        opens. Separate method so research code can substitute entry levels
+        (e.g. the random-entry benchmark) without touching the fill logic."""
+        cfg = self.cfg
+        ent_hi, ent_lo = (s.to_numpy() for s in donchian(df, cfg.entry_len))
+        ex_hi, ex_lo = (s.to_numpy() for s in donchian(df, cfg.exit_len))
+        if cfg.uses_failsafe:
+            fs_hi, fs_lo = (s.to_numpy() for s in donchian(df, cfg.failsafe_len))
+        else:
+            fs_hi = fs_lo = np.full(len(df), np.nan)
+        return ent_hi, ent_lo, ex_hi, ex_lo, fs_hi, fs_lo
 
     # --------------------------------------------------------------- sizing
     def _unit_shares(self, equity: float, n: float) -> float:

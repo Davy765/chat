@@ -6,6 +6,8 @@ SPY. **No broker connection. Nothing here places real orders.**
 Current stage: signals and simulation on SPY daily prices. Later stages: CALL/PUT
 contracts (60–90 DTE), historical option data, and portfolio risk management.
 
+See **[ROBUSTNESS.md](ROBUSTNESS.md)** for sub-period, parameter, cost, walk-forward and random-entry tests.
+
 See **[AUDIT.md](AUDIT.md)** for the technical audit: verification of Donchian
 entries and exits, N/ATR and 2N stops, look-ahead bias and simulator realism,
 plus a defect checklist by severity.
@@ -38,6 +40,8 @@ scripts/
   download_spy.py    fetch SPY daily data (needs yfinance)
   run_backtest.py    run a backtest and print a summary
   inflation_demo.py  measure how common bugs inflate results
+  robustness.py      sub-period / parameter / cost / walk-forward / random-entry tests
+reports/             generated robustness tables
 tests/test_turtle.py
 ```
 

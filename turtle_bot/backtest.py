@@ -181,9 +181,13 @@ class TurtleBacktester:
         return equity if k == 0 else reference * (1 - cfg.dd_cut) ** k
 
     # ------------------------------------------------------------------- run
-    def run(self, df: pd.DataFrame, cash_rate: pd.Series | None = None) -> BacktestResult:
+    def run(self, df: pd.DataFrame, cash_rate: pd.Series | None = None,
+            start: str | None = None) -> BacktestResult:
         """``cash_rate``: optional annual rate in percent (e.g. 3-month T-bill)
-        paid on idle equity, i.e. equity not tied up in positions."""
+        paid on idle equity, i.e. equity not tied up in positions.
+        ``start``: first session that may trade; the account is funded with
+        ``initial_equity`` at the previous close and indicators use all
+        earlier bars. The returned series begin at that previous close."""
         cfg = self.cfg
         pv = cfg.point_value
         o = df["Open"].to_numpy(float)
@@ -363,9 +367,10 @@ class TurtleBacktester:
                     b.hyp.last_was_winner = False
                     b.hyp.direction = 0
 
-        for i in range(1, size):
+        i0 = 1 if start is None else max(1, int(dates.searchsorted(pd.Timestamp(start))))
+        for i in range(i0, size):
             # ---- before the open: interest and sizing basis -----------------
-            if rate[i]:
+            if rate[i] and (start is None or i > i0):
                 idle = max(prev_equity - gross_shares() * c[i - 1] * pv, 0.0)
                 accrued = idle * rate[i] / 100 * (dates[i] - dates[i - 1]).days / 365
                 cash += accrued
@@ -396,7 +401,7 @@ class TurtleBacktester:
             equity[i] = cash + net * c[i] * pv
             prev_equity = equity[i]
 
-        equity[0] = cfg.initial_equity
+        equity[i0 - 1] = cfg.initial_equity
         eq = pd.Series(equity, index=dates, name="equity")
         b0 = books[0]
         daily = pd.DataFrame({"equity": eq, "position": net_hist, "gross_position": gross_hist,
@@ -404,7 +409,8 @@ class TurtleBacktester:
                               "interest": interest_hist, "N": n_series,
                               "entry_hi": b0.ent_hi, "entry_lo": b0.ent_lo,
                               "exit_hi": b0.ex_hi, "exit_lo": b0.ex_lo,
-                              **{f"pos_{k}": v for k, v in book_pos.items()}}, index=dates)
+                              **{f"pos_{k}": v for k, v in book_pos.items()}}, index=dates).iloc[i0 - 1:]
+        eq = eq.iloc[i0 - 1:]
         open_positions = []
         for b in books:
             p = b.pos
@@ -413,6 +419,9 @@ class TurtleBacktester:
                 open_positions.append({
                     "system": b.name, "direction": p.direction, "entry_date": p.entry_date,
                     "units": p.units, "shares": p.shares, "avg_entry": avg, "stop": p.stop,
+                    "n": p.n, "last_fill": p.last_fill, "unit_shares": p.unit_shares,
+                    "next_add": (p.last_fill + p.direction * b.cfg.pyramid_n * p.n
+                                 if p.units < b.cfg.max_units else None),
                     "unrealized_pnl": p.direction * (c[-1] - avg) * p.shares * pv})
         return BacktestResult(eq, trades, daily, cfg,
                               open_positions[0] if open_positions else None, log, open_positions)

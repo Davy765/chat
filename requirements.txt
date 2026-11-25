@@ -2,3 +2,4 @@ numpy>=1.26
 pandas>=2.1
 pytest>=8
 yfinance>=0.2  # only for scripts/download_spy.py
+requests>=2.31  # Alpaca paper bot

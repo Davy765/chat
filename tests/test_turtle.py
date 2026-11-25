@@ -361,3 +361,14 @@ def test_equity_identity_complete_rules(seed):
                    - op["shares"] * comm for op in res.open_positions)
     interest = res.daily["interest"].sum()
     assert math.isclose(res.equity.iloc[-1], 100_000 + closed + open_pnl + interest, rel_tol=1e-9)
+
+
+def test_start_date_funds_account_at_previous_close_and_trades_after():
+    df = synthetic_ohlc(1500, seed=3, vol=0.015)
+    start = df.index[800]
+    res = TurtleBacktester(TurtleConfig(system="S1+S2")).run(df, start=str(start.date()))
+    assert res.equity.index[0] == df.index[799] and res.equity.iloc[0] == 100_000
+    assert res.trades and all(t.entry_date >= start for t in res.trades)
+    # indicators still use the full history: the same channels as an unrestricted run
+    full = TurtleBacktester(TurtleConfig(system="S1+S2")).run(df)
+    pd.testing.assert_series_equal(res.daily["entry_hi"], full.daily["entry_hi"].iloc[799:])

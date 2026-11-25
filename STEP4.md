@@ -64,7 +64,7 @@ hold-out). The decision is unchanged. The figures above are after the fix.
   makes it a reasonable **hypothesis to test going forward**. Paper
   trading is the only data neither of us has seen.
 - **The breakout-length ensemble (C3) didn't help** in either period.
-- **2018–2026 was a good period for every version** (0.55–1.04), better
+- **2018–2026 was a good period for every version** (0.55–1.00), better
   than 2008–2017 (0.28–0.39). Expect weaker stretches.
 
 ## Recommendation

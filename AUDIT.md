@@ -3,12 +3,15 @@
 Date: 2026-11-25 · Scope: signals, N/ATR, stops, look-ahead, simulator realism ·
 No broker connectivity exists or was added. Nothing here places orders.
 
-> **Note (step 1):** the figures in this document were produced by the v1
-> engine settings: no drawdown rule and no interest on cash. They can be
-> reproduced with `drawdown_rule=False` (`--no-dd-rule`). Equity and trades
-> are unchanged by later versions. One exception: R-multiples were later
-> redefined against a full unit (see STEP1.md), which moves S1's average R
-> from −0.09 to −0.10. The −2.52R worst case is unchanged.
+> **Settings:** the figures in this document use the v1 engine settings: no
+> drawdown rule and no interest on cash. Reproduce them with `--no-dd-rule
+> --no-cash-rate`. R-multiples are measured against one full unit's 2N risk
+> (see STEP1.md for why that definition was corrected).
+>
+> **Data note:** the first version of this audit used a download that
+> included a still-forming bar for 2026-11-25. All numbers were regenerated
+> on the frozen snapshot in `data/`, which ends at the last completed session
+> (2026-11-24). No conclusion changed.
 
 ## 0. Status of the code under review
 
@@ -39,30 +42,30 @@ section 3 with line-level findings.
 | 1 | Donchian entries/exits correct | ✅ | Channel = max High / min Low of the **previous** L bars (`shift(1)`). Entry is a stop order at the channel and needs a **strict** break (`High > channel`). Gaps fill at the open. Exit = 10-day (S1) / 20-day (S2) opposite channel, also a stop order. Tests: `test_donchian_excludes_current_bar`, `test_long_entry_fills_at_breakout_level_not_close`, `test_gap_entry_fills_at_open`, `test_no_entry_when_high_only_equals_channel`, `test_exit_channel_10_day_low` |
 | 2 | ATR (N) and 2N stops correct | ✅ | N = Wilder 20-day ATR, `N_t = (19·N_{t-1} + TR_t)/20`, seeded with the mean of the first 20 TRs. TR uses the previous close. The stop is 2N from the **latest unit's fill**, using the N frozen at the first entry. Adding a unit moves the stop for **all** units. Tests: `test_wilder_atr_matches_hand_calculation`, `test_true_range_uses_previous_close`, `test_stop_is_two_n_below_entry_and_fills_at_stop` (R = −1.00 exactly), `test_pyramid_raises_stop_for_all_units` |
 | 3 | No look-ahead bias | ✅ | (a) **Truncation test**: running on data cut at day k gives a bit-identical equity curve and trade list up to k (6 cases, S1 and S2). (b) **Future-shock test**: halving every price after day 500 changes nothing before day 500. Sizing uses N and equity as of the previous close. |
-| 4 | Simulator not inflating results | ✅ (pessimistic by design) | Gap fills at the open, so losses can exceed 1R (real SPY minimum: **−2.52R**). Unknown intrabar order is resolved against us. Slippage applies on every fill. Gross notional is capped. An accounting identity is tested (final equity = initial + closed P&L + open P&L). On driftless random walks the strategy shows no edge. A second, independent implementation (`inflation_demo.py`, "correct" row) reproduces the engine's return exactly (+6.34% vs +6.34%). |
+| 4 | Simulator not inflating results | ✅ (pessimistic by design) | Gap fills at the open, so losses can exceed 1R (real SPY minimum: **−2.52R**). Unknown intrabar order is resolved against us. Slippage applies on every fill. Gross notional is capped. An accounting identity is tested (final equity = initial + closed P&L + open P&L). On driftless random walks the strategy shows no edge. A second, independent implementation (`inflation_demo.py`, "correct" row) reproduces the engine's return exactly (+4.99% vs +4.99%). |
 | 5 | Errors and fixes | see §2–§3 | — |
 
 ---
 
-## 2. Measured impact of common simulator bugs (real SPY, 2000-01 → 2026-11)
+## 2. Measured impact of common simulator bugs (real SPY, 2000-01-03 → 2026-11-24)
 
 Simplified single-unit Turtle (20/10, 2N stop, long and short, 1% risk, 1x
 cap, 2 bp slippage). `python scripts/inflation_demo.py data/SPY.csv`
 
 | Variant | Total return | CAGR | Max DD |
 |---|---:|---:|---:|
-| **correct** | **+6.3%** | **0.23%** | **−27.7%** |
+| **correct** | **+5.0%** | **0.18%** | **−28.2%** |
 | channel includes today's bar | 0.0% (never trades) | 0.00% | 0.0% |
-| signal on close, filled at intraday breakout level | **+137.3%** | 3.27% | −13.5% |
-| N of today used for today's size/stop | +9.5% | 0.34% | −26.8% |
-| simple-average ATR instead of Wilder | +2.6% | 0.10% | −28.7% |
-| stop fills ignore gaps (always at stop price) | +27.7% | 0.91% | −24.0% |
-| optimistic intrabar order (entry bar never stops out) | +18.7% | 0.64% | −26.7% |
-| no costs | +17.1% | 0.59% | −25.2% |
-| **all of the above (except the dead-channel bug)** | **+215.4%** | **4.36%** | **−12.9%** |
+| signal on close, filled at intraday breakout level | **+133.7%** | 3.21% | −13.5% |
+| N of today used for today's size/stop | +8.1% | 0.29% | −27.3% |
+| simple-average ATR instead of Wilder | +1.3% | 0.05% | −29.1% |
+| stop fills ignore gaps (always at stop price) | +26.7% | 0.88% | −24.0% |
+| optimistic intrabar order (entry bar never stops out) | +17.1% | 0.59% | −26.7% |
+| no costs | +15.7% | 0.54% | −25.2% |
+| **all of the above (except the dead-channel bug)** | **+212.8%** | **4.33%** | **−12.9%** |
 
 All the bugs together turn a strategy that roughly breaks even into one that
-looks like +4.4% a year with half the drawdown. This is why each item below is
+looks like +4.3% a year with half the drawdown. This is why each item below is
 classified the way it is.
 
 ---
@@ -74,18 +77,18 @@ classified the way it is.
 | ID | Defect | How to detect | Fix |
 |---|---|---|---|
 | C1 | **Donchian channel includes the current bar** (`rolling(20).max()` without `shift(1)`). With `High > channel` it never triggers; with `Close > channel` it never triggers either. With `>=`, the bar "breaks out" against itself. | Strategy trades rarely or never; or every new high is an entry. | `high.rolling(L).max().shift(1)` (see `indicators.donchian`). |
-| C2 | **Close-confirmed signal filled at the breakout price.** Signal `Close > 20d high` but entry price = the 20-day high. This uses the close (future information within the bar) to select only the breakouts that held, while paying the intraday price. **+137% vs +6% in §2.** | Entry prices are always exactly the channel value, and no failed intraday breakouts appear in the log. | Choose one consistent model: (a) intraday stop order: trigger on `High > channel`, fill at `max(channel, Open)`; or (b) close signal: trigger on `Close > channel`, fill at the **next open**. v1 uses (a), which is the original Turtle method. |
+| C2 | **Close-confirmed signal filled at the breakout price.** Signal `Close > 20d high` but entry price = the 20-day high. This uses the close (future information within the bar) to select only the breakouts that held, while paying the intraday price. **+134% vs +5% in §2.** | Entry prices are always exactly the channel value, and no failed intraday breakouts appear in the log. | Choose one consistent model: (a) intraday stop order: trigger on `High > channel`, fill at `max(channel, Open)`; or (b) close signal: trigger on `Close > channel`, fill at the **next open**. v1 uses (a), which is the original Turtle method. |
 | C3 | **N (ATR) of day t used to size or set stops for an entry on day t.** TR_t needs High_t, Low_t and Close_t, which are unknown at entry time. | Compare `N[i]` vs `N[i-1]` at the sizing call. | Use `N[i-1]` (v1: `n_prev`). |
 | C4 | **Mixed adjustment basis**: adjusted Close with unadjusted High/Low (e.g. yfinance `Adj Close` next to raw `High`). This creates false gaps and breakouts on every ex-dividend date, and false signals around splits in older data. | Plot Close vs High: Close above High on some days. | Scale O/H/L/C by `Adj Close / Close` (`data.adjust_ohlc`). `validate_ohlc` rejects Close > High. |
-| C5 | **Stops filled at the stop price on gap days.** This caps every loss at −1R; real gaps give up to −2.5R on SPY. +27.7% vs +6.3%. | `min(r_multiple)` is never below −1.0. | If Open is already beyond the stop, fill at Open (`*_gap` exit reasons in v1). |
+| C5 | **Stops filled at the stop price on gap days.** This caps every loss at −1R; real gaps give up to −2.5R on SPY. +26.7% vs +5.0%. | `min(r_multiple)` is never below −1.0. | If Open is already beyond the stop, fill at Open (`*_gap` exit reasons in v1). |
 | C6 | **Sizing from equity that includes today's P&L**, or from final equity, or from a constant "initial capital" while reporting compounded returns. | Equity used in sizing ≠ previous close equity. | Size with equity at the previous close (v1: `prev_equity`). |
 
 ### 🟠 HIGH: materially biased results
 
 | ID | Defect | Fix |
 |---|---|---|
-| H1 | **Optimistic intrabar ordering**: on the entry bar (or a pyramid bar), the simulator assumes the high came before the low. +18.7% in §2. | Assume the worst order (v1). Report how many trades depend on it (`same_bar_stop_trades`: 18 of 289 on SPY S1). Resolve with intraday data later. |
-| H2 | **No transaction costs or slippage.** +17.1% in §2. | v1 default: 2 bp per side on SPY. **For options this must be replaced with real bid/ask**; spreads are 1–5% of premium, roughly 100x larger. |
+| H1 | **Optimistic intrabar ordering**: on the entry bar (or a pyramid bar), the simulator assumes the high came before the low. +17.1% in §2. | Assume the worst order (v1). Report how many trades depend on it (`same_bar_stop_trades`: 19 of 291 on SPY S1). Resolve with intraday data later. |
+| H2 | **No transaction costs or slippage.** +15.7% in §2. | v1 default: 2 bp per side on SPY. **For options this must be replaced with real bid/ask**; spreads are 1–5% of premium, roughly 100x larger. |
 | H3 | **Unbounded leverage.** On SPY, N ≈ 1–1.5% of price, so one 1%-risk unit ≈ 70–100% of equity. Four units ≈ 3–4x notional. Futures margin made this normal for the Turtles; a cash or Reg-T equity account cannot do it. | **Deviation, explained**: `max_leverage=1.0` by default. This is a risk constraint, not a signal change. Set it higher to see the uncapped rules (table §4). |
 | H4 | **Wrong N formula**: SMA of TR, or `ewm(span=20)` (alpha = 2/21), instead of Wilder (alpha = 1/20). | `indicators.wilder_atr`, tested against a hand-rolled loop. |
 | H5 | **Pyramiding errors**: adds triggered from the signal price instead of the previous **fill**; stop not raised for earlier units; adds sized with a new N. | v1: next add = last fill ± ½N_entry; all units' stop = last fill ∓ 2N_entry; unit size fixed at entry. |
@@ -115,24 +118,26 @@ classified the way it is.
 
 ## 4. What v1 shows about the strategy on SPY (no rules changed)
 
-2000-01-03 → 2026-11-25, 2 bp slippage, whole shares. SPY buy and hold over
-the same period: +683% (max DD −55%).
+2000-01-03 → 2026-11-24, 2 bp slippage, whole shares. SPY buy and hold over
+the same period: +691% (max DD −55%). Single runs move a little with
+invisible data changes (ROBUSTNESS.md §G), so read differences under ~0.3
+CAGR points as noise.
 
 | System | Shorts | Leverage cap | Total return | CAGR | Max DD | Sharpe | Trades | Win % | PF |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| S1 | yes | 1x | −48.8% | −2.46% | −58.7% | −0.14 | 289 | 34.3 | 0.74 |
+| S1 | yes | 1x | −52.3% | −2.72% | −58.9% | −0.16 | 291 | 33.7 | 0.72 |
 | S1 | yes | 4x | −93.4% | −9.63% | −94.0% | −0.25 | 302 | 23.2 | 0.57 |
-| S1 | no | 1x | +122.5% | 3.02% | −26.4% | 0.44 | 153 | 44.4 | 1.86 |
-| S1 | no | 4x | +191.2% | 4.05% | −40.9% | 0.31 | 160 | 33.8 | 1.49 |
-| S2 | yes | 1x | −34.5% | −1.56% | −50.3% | −0.07 | 190 | 26.8 | 0.79 |
-| S2 | yes | 4x | −78.2% | −5.50% | −85.0% | −0.09 | 193 | 20.2 | 0.64 |
-| S2 | no | 1x | +105.2% | 2.71% | −21.6% | 0.40 | 98 | 40.8 | 1.86 |
-| S2 | no | 4x | +314.8% | 5.43% | −39.0% | 0.38 | 102 | 30.4 | 1.71 |
+| S1 | no | 1x | +130.2% | 3.15% | −26.4% | 0.45 | 151 | 45.7 | 1.91 |
+| S1 | no | 4x | +197.0% | 4.13% | −40.9% | 0.32 | 159 | 34.0 | 1.50 |
+| S2 | yes | 1x | −30.9% | −1.37% | −49.4% | −0.05 | 188 | 27.1 | 0.81 |
+| S2 | yes | 4x | −77.7% | −5.43% | −84.6% | −0.08 | 192 | 20.3 | 0.65 |
+| S2 | no | 1x | +106.9% | 2.74% | −21.2% | 0.41 | 97 | 41.2 | 1.87 |
+| S2 | no | 4x | +323.3% | 5.51% | −38.2% | 0.38 | 101 | 30.7 | 1.72 |
 
 Observations (reported, **not acted on**; changing the rules is your decision):
 
-* **The short side is the problem.** S1 1x: longs +$23.9k over 154 trades,
-  shorts −$73.9k over 135 trades. SPY has a strong upward drift and sharp
+* **The short side is the problem.** S1 1x: longs +$20.3k over 156 trades,
+  shorts −$73.4k over 135 trades. SPY has a strong upward drift and sharp
   V-shaped recoveries, which is the worst case for a 20-day short breakout.
   The Turtles traded a diversified futures portfolio, where a single
   instrument's drift averaged out; on one equity index it does not.
@@ -180,8 +185,9 @@ must be tested out of sample.
 
 ```bash
 pip install -r requirements.txt
-python scripts/download_spy.py                # read-only market data
-python -m pytest -q                           # 28 tests
-python scripts/run_backtest.py data/SPY.csv --system S1 --start 2000-01-01
+# data/ already holds the frozen snapshot used here; re-downloading
+# (scripts/download_etfs.py) gives slightly different numbers
+python -m pytest -q
+python scripts/run_backtest.py data/SPY.csv --system S1 --start 2000-01-01 --no-dd-rule --no-cash-rate
 python scripts/inflation_demo.py data/SPY.csv
 ```

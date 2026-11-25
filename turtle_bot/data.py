@@ -7,8 +7,12 @@ breakouts around every ex-dividend date (a classic silent bug).
 
 from __future__ import annotations
 
+import pathlib
+
 import numpy as np
 import pandas as pd
+
+DATA_DIR = pathlib.Path(__file__).resolve().parents[1] / "data"
 
 REQUIRED = ["Open", "High", "Low", "Close"]
 
@@ -83,3 +87,10 @@ def load_rate_csv(path: str) -> pd.Series:
     s = pd.to_numeric(raw.iloc[:, 1], errors="coerce")
     s.index = pd.to_datetime(raw[date_col])
     return s.dropna().sort_index().rename("cash_rate_pct")
+
+
+def default_cash_rate() -> pd.Series | None:
+    """The 3-month T-bill series in data/DTB3.csv if it has been downloaded
+    (scripts/download_rates.py), else None (no interest)."""
+    path = DATA_DIR / "DTB3.csv"
+    return load_rate_csv(str(path)) if path.exists() else None

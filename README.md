@@ -30,7 +30,8 @@ plus a defect checklist by severity.
 
 Documented deviations (see `turtle_bot/config.py`): gross leverage cap (default
 1x), slippage of 2 bp per fill, whole shares, worst-case intrabar ordering.
-Optional: interest on idle cash at the 3-month T-bill rate (`--cash-rate data/DTB3.csv`).
+Interest on idle cash at the 3-month T-bill rate is on whenever `data/DTB3.csv`
+exists (`--no-cash-rate` turns it off).
 
 ## Layout
 
@@ -42,7 +43,7 @@ turtle_bot/
   backtest.py    daily event-driven simulator
   metrics.py     CAGR, drawdown, Sharpe, trade stats
 scripts/
-  download_spy.py    fetch SPY daily data (needs yfinance)
+  download_etfs.py   fetch daily ETF data, completed sessions only (needs yfinance)
   download_rates.py  fetch the 3-month T-bill rate (FRED DTB3)
   run_backtest.py    run a backtest and print a summary
   inflation_demo.py  measure how common bugs inflate results
@@ -56,10 +57,10 @@ tests/test_turtle.py
 
 ```bash
 pip install -r requirements.txt
-python scripts/download_spy.py
-python scripts/download_rates.py
+# data/ holds a frozen snapshot (through 2026-11-24) so reports reproduce exactly;
+# scripts/download_etfs.py and scripts/download_rates.py refresh it (numbers will move slightly)
 python -m pytest -q
 python scripts/run_backtest.py data/SPY.csv --system S1 --start 2000-01-01
 python scripts/run_backtest.py data/SPY.csv --system S2 --no-short --max-leverage 4
-python scripts/run_backtest.py data/SPY.csv --system S1+S2 --no-short --cash-rate data/DTB3.csv
+python scripts/run_backtest.py data/SPY.csv --system S1+S2 --no-short
 ```

@@ -1,4 +1,4 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-data/*.csv
+# data/*.csv is committed on purpose: frozen snapshot for reproducible reports

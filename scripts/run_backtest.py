@@ -2,7 +2,8 @@
 
     python scripts/run_backtest.py data/SPY.csv --system S1
     python scripts/run_backtest.py data/SPY.csv --system S2 --max-leverage 4
-    python scripts/run_backtest.py data/SPY.csv --system S1+S2 --cash-rate data/DTB3.csv
+    python scripts/run_backtest.py data/SPY.csv --system S1+S2      # interest on if data/DTB3.csv exists
+    python scripts/run_backtest.py data/SPY.csv --no-cash-rate
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from turtle_bot import TurtleBacktester, TurtleConfig  # noqa: E402
-from turtle_bot.data import load_csv, load_rate_csv  # noqa: E402
+from turtle_bot.data import default_cash_rate, load_csv, load_rate_csv  # noqa: E402
 from turtle_bot.metrics import summarize  # noqa: E402
 
 
@@ -31,7 +32,8 @@ def main() -> None:
     ap.add_argument("--no-skip-filter", action="store_true")
     ap.add_argument("--no-dd-rule", action="store_true", help="disable the drawdown sizing rule")
     ap.add_argument("--dd-reference", default="year_start", choices=["year_start", "initial", "peak"])
-    ap.add_argument("--cash-rate", help="CSV of annual cash rate in %% (e.g. data/DTB3.csv)")
+    ap.add_argument("--cash-rate", help="CSV of annual cash rate in %% (default: data/DTB3.csv if present)")
+    ap.add_argument("--no-cash-rate", action="store_true", help="no interest on idle cash")
     ap.add_argument("--trades-out")
     args = ap.parse_args()
 
@@ -40,7 +42,13 @@ def main() -> None:
                        slippage_bps=args.slippage_bps, allow_short=not args.no_short,
                        use_skip_filter=not args.no_skip_filter, s1_weight=args.s1_weight,
                        drawdown_rule=not args.no_dd_rule, dd_reference=args.dd_reference)
-    rate = load_rate_csv(args.cash_rate) if args.cash_rate else None
+    if args.no_cash_rate:
+        rate = None
+    elif args.cash_rate:
+        rate = load_rate_csv(args.cash_rate)
+    else:
+        rate = default_cash_rate()
+    print(f"{'cash interest':>22}: {'off' if rate is None else 'on (T-bill)'}")
     res = TurtleBacktester(cfg).run(df, cash_rate=rate)
     for k, v in summarize(res, df).items():
         print(f"{k:>22}: {v}")

@@ -205,6 +205,7 @@ class TurtleBacktester:
         stop_hist = np.full(size, np.nan)
         sizing_hist = np.full(size, np.nan)
         interest_hist = np.zeros(size)
+        book_pos = {b.name: np.zeros(size) for b in books}
         prev_equity = cfg.initial_equity
         dd_ref = cfg.initial_equity
 
@@ -386,6 +387,9 @@ class TurtleBacktester:
             # ---- at the close ----------------------------------------------
             net = sum(b.pos.direction * b.pos.shares for b in books if b.pos is not None)
             net_hist[i] = net
+            for b in books:
+                if b.pos is not None:
+                    book_pos[b.name][i] = b.pos.direction * b.pos.shares
             gross_hist[i] = gross_shares()
             if books[0].pos is not None:
                 stop_hist[i] = books[0].pos.stop
@@ -399,7 +403,8 @@ class TurtleBacktester:
                               "stop": stop_hist, "sizing_equity": sizing_hist,
                               "interest": interest_hist, "N": n_series,
                               "entry_hi": b0.ent_hi, "entry_lo": b0.ent_lo,
-                              "exit_hi": b0.ex_hi, "exit_lo": b0.ex_lo}, index=dates)
+                              "exit_hi": b0.ex_hi, "exit_lo": b0.ex_lo,
+                              **{f"pos_{k}": v for k, v in book_pos.items()}}, index=dates)
         open_positions = []
         for b in books:
             p = b.pos

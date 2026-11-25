@@ -8,6 +8,10 @@ Sections
   E. Walk-forward parameter selection (is choosing the "best" grid cell real?)
   F. Random-entry benchmark (is the breakout signal better than random entries
      with the same exits, stops and sizing?)
+  G. Numerical path noise: every price multiplied by 1 +/- 1e-6 (invisible,
+     smaller than a data vendor's re-adjustment). Whole-share rounding makes
+     the path chaotic, so this measures how much ANY single result can move
+     for no economic reason.
 
 Every backtest runs on the full history once. Sub-period numbers are sliced
 from that single causal equity curve, so no period loses its warm-up and
@@ -214,6 +218,28 @@ def section_f(df, n_seeds=200):
     return pd.DataFrame(rows)
 
 
+def section_g(df, n_seeds=50):
+    rows = []
+    for name, kw in BASES.items():
+        base = stats(run(df, **kw).equity.loc["1994":])
+        cagrs, dds = [], []
+        for seed in range(n_seeds):
+            f = 1 + np.random.default_rng(seed).uniform(-1e-6, 1e-6, len(df))
+            d = df.copy()
+            for col in ("Open", "High", "Low", "Close"):
+                d[col] = d[col] * f
+            d["High"] = d[["Open", "High", "Close"]].max(axis=1)
+            d["Low"] = d[["Open", "Low", "Close"]].min(axis=1)
+            s = stats(run(d, **kw).equity.loc["1994":])
+            cagrs.append(s["cagr_%"])
+            dds.append(s["max_dd_%"])
+        rows.append({"variant": name, "unperturbed_cagr_%": base["cagr_%"],
+                     "cagr_p5_%": np.percentile(cagrs, 5), "cagr_median_%": np.median(cagrs),
+                     "cagr_p95_%": np.percentile(cagrs, 95),
+                     "max_dd_p5_%": np.percentile(dds, 5), "max_dd_p95_%": np.percentile(dds, 95)})
+    return pd.DataFrame(rows)
+
+
 # -------------------------------------------------------------------- main
 def main() -> None:
     path = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "data" / "SPY.csv")
@@ -227,11 +253,12 @@ def main() -> None:
     costs = section_d(df)
     wf_rows, wf_sum = section_e(curves)
     rnd = section_f(df)
+    noise = section_g(df)
 
     for name, t in [("subperiods", blocks), ("yearly", years), ("channel_grid", grid),
                     ("stop_units_grid", stopgrid), ("costs", costs),
                     ("walkforward_windows", wf_rows), ("walkforward_summary", wf_sum),
-                    ("random_entry", rnd)]:
+                    ("random_entry", rnd), ("path_noise", noise)]:
         t.to_csv(out / f"{name}.csv", index=name == "yearly")
 
     def pivot(short):
@@ -267,6 +294,7 @@ def main() -> None:
         "\n## E. Walk-forward selection (8y train → 2y test, rolling)\n", md(wf_sum.round(2)),
         "\n### Windows\n", md(wf_rows.round(2)),
         "\n## F. Random-entry benchmark (long-only, 200 seeds)\n", md(rnd.round(2)),
+        "\n## G. Numerical path noise (prices x (1 ± 1e-6), 50 seeds)\n", md(noise.round(2)),
     ]
     (out / "robustness.md").write_text("\n".join(report) + "\n")
     print((out / "robustness.md").read_text())

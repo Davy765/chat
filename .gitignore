@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 # data/*.csv is committed on purpose: frozen snapshot for reproducible reports
+
+# fresh daily data for paper trading (the research snapshot in data/ stays frozen)
+data/live/

@@ -1,0 +1,12 @@
+{
+  "start": "2026-11-25",
+  "equity": 100000,
+  "universe": {
+    "SPY": "equity", "QQQ": "equity", "IWM": "equity", "EFA": "equity", "EEM": "equity",
+    "TLT": "bonds", "IEF": "bonds",
+    "GLD": "metals", "SLV": "metals", "CPER": "metals",
+    "USO": "energy", "UNG": "energy",
+    "DBA": "agriculture",
+    "UUP": "dollar"
+  }
+}

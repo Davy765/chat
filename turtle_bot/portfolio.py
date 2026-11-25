@@ -140,6 +140,10 @@ class PortfolioResult:
     open_positions: list[dict]
     config: ModernConfig
     log: list[str] = field(default_factory=list)
+    # State after the last close, for the paper-trading report:
+    pending_orders: list[dict] = field(default_factory=list)   # orders for the NEXT open
+    state: dict = field(default_factory=dict)                  # equity, peak, sizing, pause
+    snapshot: list[dict] = field(default_factory=list)         # per-market levels for the next session
 
     def trades_frame(self) -> pd.DataFrame:
         return pd.DataFrame([t.__dict__ for t in self.trades])
@@ -404,9 +408,34 @@ class PortfolioBacktester:
         daily = pd.DataFrame({"equity": eq_hist, "gross": gross_hist, "gross_leverage": gross_hist / eq_hist,
                               "heat": heat_hist, "units": units_hist, "interest": interest_hist,
                               "sizing_equity": sizing_hist}, index=cal).iloc[i0:]
-        open_pos = [{"ticker": m.ticker, "units": m.pos.units, "shares": m.pos.shares,
-                     "avg_entry": m.pos.cost_basis / m.pos.shares, "stop": m.pos.stop,
-                     "commissions": m.pos.commissions,
-                     "unrealized_pnl": (last_close[m.ticker] - m.pos.cost_basis / m.pos.shares) * m.pos.shares}
-                    for m in mkts if m.pos is not None]
-        return PortfolioResult(eq, daily, trades, open_pos, cfg, log)
+        open_pos = []
+        for m in mkts:
+            p = m.pos
+            if p is None:
+                continue
+            can_add = not p.no_adds and p.units < cfg.max_units
+            open_pos.append({
+                "ticker": m.ticker, "group": m.group, "entry_date": p.entry_date,
+                "units": p.units, "shares": p.shares, "avg_entry": p.cost_basis / p.shares,
+                "last_close": last_close[m.ticker], "stop": p.stop, "n": p.n,
+                "last_fill": p.last_fill, "high_close": p.high_close,
+                "add_if_close_at_or_above": p.last_fill + cfg.add_n * p.n if can_add else None,
+                "commissions": p.commissions,
+                "unrealized_pnl": (last_close[m.ticker] - p.cost_basis / p.shares) * p.shares})
+        pending = [{"ticker": m.ticker, "kind": od.kind, "shares": od.shares, "n": od.n,
+                    "stop_after_fill": f"fill - {cfg.stop_n:g} x {od.n:.4g}" if od.kind == "entry" else None}
+                   for m in mkts for od in m.pending]
+        snapshot = []
+        for m in mkts:
+            j = len(m.dates) - 1
+            snapshot.append({
+                "ticker": m.ticker, "group": m.group, "last_date": m.dates[j], "close": m.c[j],
+                "n": m.n[j], "trend_ok": bool(m.trend_ok[j]),
+                "entry_level_next": float(np.max(m.h[max(0, j - cfg.entry_len + 1):j + 1])),
+                "exit_level_next": float(np.min(m.l[max(0, j - cfg.exit_len + 1):j + 1])),
+                "in_position": m.pos is not None})
+        state = {"equity": float(eq.iloc[-1]), "peak": peak, "drawdown": 1 - float(eq.iloc[-1]) / peak,
+                 "sizing_equity": float(sizing_hist[-1]), "pause_sessions_left": pause_left,
+                 "heat": float(heat_hist[-1]), "gross_leverage": float(gross_hist[-1] / eq_hist[-1]),
+                 "cash": cash}
+        return PortfolioResult(eq, daily, trades, open_pos, cfg, log, pending, state, snapshot)

@@ -239,3 +239,56 @@ def test_start_date_resets_capital():
     res = PortfolioBacktester().run(data, groups, start=str(start.date()))
     assert res.equity.index[0] == start
     assert all(t.entry_date >= start for t in res.trades)
+
+
+# ------------------------------------------- paper-trading report outputs
+def _find_k_with_orders(data, groups, cfg, kinds):
+    """First cut k where the run on bars [:k] queues an order of the given kinds."""
+    for k in range(250, 1400, 7):
+        res = PortfolioBacktester(cfg).run({t: d.iloc[:k] for t, d in data.items()}, groups)
+        if any(o["kind"] in kinds for o in res.pending_orders):
+            return k, res
+    raise AssertionError("no pending orders found")
+
+
+@pytest.mark.parametrize("kind", ["entry", "exit"])
+def test_pending_orders_are_what_the_next_open_executes(kind):
+    data, groups = _universe(6)
+    cfg = ModernConfig(max_leverage=50.0, heat_cap=1.0, total_long_units=99, group_unit_cap=99,
+                       **({} if kind == "entry" else {"use_trailing": False, "stop_n": 10.0}))
+    k, res = _find_k_with_orders(data, groups, cfg, {kind})
+    nxt = PortfolioBacktester(cfg).run({t: d.iloc[:k + 1] for t, d in data.items()}, groups)
+    day = data["S0"].index[k]
+    for o in (o for o in res.pending_orders if o["kind"] == kind):
+        if kind == "entry":
+            opened = [p for p in nxt.open_positions if p["ticker"] == o["ticker"] and p["entry_date"] == day]
+            stopped = [t for t in nxt.trades if t.ticker == o["ticker"] and t.entry_date == day]
+            assert opened or stopped
+            assert (opened[0]["shares"] if opened else stopped[0].shares) == o["shares"]
+        else:
+            closed = [t for t in nxt.trades if t.ticker == o["ticker"] and t.exit_date == day]
+            assert closed and closed[0].exit_reason in ("channel_exit", "stop_gap")
+
+
+def test_snapshot_levels_match_next_bar_channels():
+    data, groups = _universe(7)
+    k = 900
+    res = PortfolioBacktester().run({t: d.iloc[:k] for t, d in data.items()}, groups)
+    for snap in res.snapshot:
+        m = _Market(snap["ticker"], "g", data[snap["ticker"]].iloc[:k + 1], ModernConfig())
+        assert math.isclose(snap["entry_level_next"], m.ent_hi[k])
+        assert math.isclose(snap["exit_level_next"], m.ex_lo[k])
+
+
+def test_open_position_stop_is_the_next_days_resting_stop():
+    data, groups = _universe(8)
+    cfg = ModernConfig(max_leverage=50.0)
+    for k in range(400, 1400, 50):
+        res = PortfolioBacktester(cfg).run({t: d.iloc[:k] for t, d in data.items()}, groups)
+        held = {p["ticker"]: p for p in res.open_positions}
+        exiting = {o["ticker"] for o in res.pending_orders if o["kind"] == "exit"}
+        nxt = PortfolioBacktester(cfg).run({t: d.iloc[:k + 1] for t, d in data.items()}, groups)
+        for t in nxt.trades:
+            if t.exit_date == data["S0"].index[k] and t.ticker in held and t.ticker not in exiting \
+                    and t.exit_reason == "stop":
+                assert math.isclose(t.exit_price, held[t.ticker]["stop"])

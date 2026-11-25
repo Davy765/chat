@@ -6,6 +6,8 @@ SPY. **No broker connection. Nothing here places real orders.**
 Current stage: signals and simulation on SPY daily prices. Later stages: CALL/PUT
 contracts (60–90 DTE), historical option data, and portfolio risk management.
 
+See **[PAPER.md](PAPER.md)** for the daily paper-trading routine (no broker, no orders).
+
 See **[STEP3.md](STEP3.md)** for the backtest of the "Modern Turtle" rulebook (14 ETFs, multi-market portfolio engine).
 
 See **[STEP2.md](STEP2.md)** for the out-of-sample test on 8 ETFs (SPY, QQQ, IWM, DIA, EFA, EEM, TLT, GLD).
@@ -56,6 +58,8 @@ scripts/
   step1_compare.py   effect of the drawdown rule, S1+S2 and cash interest
   step2_multi_etf.py out-of-sample test on 8 ETFs, random benchmark, basket
   step3_modern.py    Modern Turtle rulebook test (pre-registered criteria)
+  paper_report.py    daily paper-trading report (orders for the next session)
+paper/               paper-trading config, archived daily reports, journal
 reports/             generated robustness tables
 tests/test_turtle.py, tests/test_portfolio.py
 ```
